@@ -93,7 +93,6 @@ class StockGUI:
         self.info_label_items = []
         self.current_stock_index = -1
         
-        self.is_showing_stock_list = False
         self.current_page = 1
         self.page_size = 100
         self.total_stocks = 0
