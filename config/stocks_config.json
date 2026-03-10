@@ -1,0 +1,20 @@
+{
+    "stocks": [       
+        {
+            "symbol": "600519",
+            "name": "贵州茅台",
+            "market": "A股"
+        },
+        {
+            "symbol": "000858",
+            "name": "五粮液",
+            "market": "A股"
+        },
+        {
+            "symbol": "601318",
+            "name": "中国平安",
+            "market": "A股"
+        }
+    ],
+    "refresh_interval": 5
+}
