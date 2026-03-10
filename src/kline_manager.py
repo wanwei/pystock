@@ -36,7 +36,10 @@ class KLineManager:
         'daily': {'days': 365, 'name': '日线'}
     }
     
-    def __init__(self, data_dir='data/kline_data'):
+    def __init__(self, data_dir=None):
+        if data_dir is None:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            data_dir = os.path.join(project_root, 'data', 'kline_data')
         self.data_dir = data_dir
         self.config_path = STOCKS_CONFIG_PATH
         self.downloader = EastMoneyDownloader()

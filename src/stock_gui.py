@@ -68,6 +68,7 @@ class StockGUI:
         self.root.title("股票行情系统")
         self.root.geometry("1000x700")
         self.root.minsize(800, 600)
+        self.root.state('zoomed')
         
         self.finnhub_client = None
         if FINNHUB_API_KEY:
@@ -288,13 +289,10 @@ class StockGUI:
                 messagebox.showerror("错误", "配置文件格式错误：缺少stocks字段")
                 return
             
-            config = self.data_manager.load_stocks_config()
-            config['stocks'] = config_data['stocks']
-            self.data_manager.save_stocks_config(config)
-            self.data_manager._config_cache = None
+            self.data_manager._config_cache = config_data
             
             self.cached_quotes = {}
-            self.add_message(f"已从 {os.path.basename(file_path)} 装载 {len(config_data['stocks'])} 只股票")
+            self.add_message(f"已从 {os.path.basename(file_path)} 装载 {len(config_data['stocks'])} 只股票（仅在当前会话有效）")
             
             self._init_page_data()
             self.start_refresh_quotes()
@@ -428,12 +426,22 @@ class StockGUI:
         children = self.tree.get_children()
         self.current_stock_index = children.index(item_id)
         
-        item = self.tree.item(item_id)
-        values = item['values']
+        stocks = self.data_manager.get_stock_list()
+        if stocks and self.current_stock_index < len(stocks):
+            stock = stocks[self.current_stock_index]
+            self.current_symbol = stock.get('symbol', '')
+            self.current_name = stock.get('name', '')
+            self.current_market = stock.get('market', '美股')
+        else:
+            item = self.tree.item(item_id)
+            values = item['values']
+            symbol = values[0]
+            if isinstance(symbol, int):
+                symbol = f"{symbol:06d}"
+            self.current_symbol = symbol
+            self.current_name = values[1]
+            self.current_market = values[2]
         
-        self.current_symbol = values[0]
-        self.current_name = values[1]
-        self.current_market = values[2]
         self.current_period = 'daily'
         self.display_count = 120
         self.display_start = 0
