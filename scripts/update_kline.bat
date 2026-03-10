@@ -19,7 +19,7 @@ if errorlevel 1 (
 echo.
 
 echo [Step 2/2] Downloading/Updating K-Line data...
-python src/update_kline_data.py
+python src/downloaders/update_kline_data.py
 if errorlevel 1 (
     echo K-Line data update failed!
     pause

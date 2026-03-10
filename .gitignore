@@ -23,7 +23,7 @@ wheels/
 *.log
 logs/
 
-data/kline_data/
+data/
 *.csv
 
 .idea/
