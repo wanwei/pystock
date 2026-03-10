@@ -1,6 +1,7 @@
 @echo off
 chcp 65001 >nul
-title 股票行情系统
+title Stock System
 cd /d "%~dp0"
-python stock_gui.py
+cd ..
+python src\stock_gui.py
 pause
