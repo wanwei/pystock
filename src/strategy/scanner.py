@@ -1,10 +1,17 @@
 import os
+import sys
 import json
 import pandas as pd
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from .interfaces import BaseStrategy, Signal
-from .strategies import HighBreakoutStrategy
+
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+    from strategy.interfaces import BaseStrategy, Signal
+    from strategy.strategies import HighBreakoutStrategy
+else:
+    from .interfaces import BaseStrategy, Signal
+    from .strategies import HighBreakoutStrategy
 
 
 class StockScanner:
@@ -72,7 +79,9 @@ class StockScanner:
     
     def scan_latest(self, strategy: BaseStrategy, period: str = 'daily',
                     min_data_days: int = 60, save_config: bool = True,
-                    config_dir: str = None) -> List[Dict[str, Any]]:
+                    config_dir: str = None, max_results: int = None,
+                    show_progress: bool = True,
+                    filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """
         扫描所有股票，找出最新一根K线满足策略条件的股票
         
@@ -82,23 +91,59 @@ class StockScanner:
             min_data_days: 最小数据天数要求
             save_config: 是否保存结果到配置文件
             config_dir: 配置文件目录，默认为 data_dir 同级的 config 目录
+            max_results: 最大结果数量，None表示不限制
+            show_progress: 是否显示进度信息
+            filters: 过滤条件，如 {'min_volume': 1000000, 'min_price': 5}
             
         Returns:
             List[Dict]: 满足条件的股票列表
         """
         stocks = self._get_stock_list()
         results = []
+        total = len(stocks)
         
-        print(f"正在扫描 {len(stocks)} 只股票...")
+        if show_progress:
+            print(f"正在扫描 {total} 只股票...")
         
         for i, stock in enumerate(stocks, 1):
             symbol = stock['symbol']
             market = stock['market']
             
+            if show_progress and i % 100 == 0:
+                pct = i / total * 100
+                print(f"  进度: {i}/{total} ({pct:.1f}%) - 已找到 {len(results)} 只突破股票")
+            
             df = self._load_kline_data(symbol, market, period)
             
             if df is None or len(df) < min_data_days:
                 continue
+            
+            if filters:
+                last_row = df.iloc[-1]
+                passes_filter = True
+                
+                if 'min_volume' in filters:
+                    volume = last_row.get('volume', 0)
+                    if volume < filters['min_volume']:
+                        passes_filter = False
+                
+                if passes_filter and 'min_price' in filters:
+                    close_price = last_row.get('close')
+                    if close_price is not None and close_price < filters['min_price']:
+                        passes_filter = False
+                
+                if passes_filter and 'max_price' in filters:
+                    close_price = last_row.get('close')
+                    if close_price is not None and close_price > filters['max_price']:
+                        passes_filter = False
+                
+                if passes_filter and 'min_turnover' in filters:
+                    turnover = last_row.get('turnover', 0)
+                    if turnover < filters['min_turnover']:
+                        passes_filter = False
+                
+                if not passes_filter:
+                    continue
             
             signals = strategy.generate_signals(df)
             
@@ -124,6 +169,14 @@ class StockScanner:
                     'metadata': last_signal.metadata
                 }
                 results.append(result)
+                
+                if max_results and len(results) >= max_results:
+                    if show_progress:
+                        print(f"  已达到最大结果数量 {max_results}，停止扫描")
+                    break
+        
+        if show_progress:
+            print(f"  扫描完成: 共找到 {len(results)} 只突破股票")
         
         if save_config and results:
             self._save_results_to_config(results, config_dir)
@@ -170,7 +223,8 @@ class StockScanner:
             print(f"保存扫描结果失败: {e}")
     
     def scan_breakout_stocks(self, lookback_start: int = 5, lookback_end: int = 50,
-                             confirm_days: int = 4, period: str = 'daily') -> List[Dict[str, Any]]:
+                             confirm_days: int = 4, period: str = 'daily',
+                             max_results: int = None) -> List[Dict[str, Any]]:
         """
         扫描突破股票的便捷方法
         
@@ -179,6 +233,7 @@ class StockScanner:
             lookback_end: 回溯结束天数
             confirm_days: 确认天数
             period: K线周期
+            max_results: 最大结果数量
             
         Returns:
             List[Dict]: 突破股票列表
@@ -189,10 +244,11 @@ class StockScanner:
             confirm_days=confirm_days
         )
         
-        return self.scan_latest(strategy, period)
+        return self.scan_latest(strategy, period, max_results=max_results)
     
     def scan_with_filter(self, strategy: BaseStrategy, period: str = 'daily',
-                         filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+                         filters: Dict[str, Any] = None,
+                         max_results: int = None) -> List[Dict[str, Any]]:
         """
         带过滤条件的扫描
         
@@ -200,56 +256,20 @@ class StockScanner:
             strategy: 策略实例
             period: K线周期
             filters: 过滤条件，如 {'min_volume': 1000000, 'min_price': 5}
+            max_results: 最大结果数量
             
         Returns:
             List[Dict]: 满足条件的股票列表
         """
-        results = self.scan_latest(strategy, period)
-        
-        if not filters:
-            return results
-        
-        filtered_results = []
-        for r in results:
-            symbol = r['symbol']
-            market = r['market']
-            
-            df = self._load_kline_data(symbol, market, period)
-            if df is None or len(df) == 0:
-                continue
-            
-            last_row = df.iloc[-1]
-            passes_filter = True
-            
-            if 'min_volume' in filters:
-                volume = last_row.get('volume', 0)
-                if volume < filters['min_volume']:
-                    passes_filter = False
-            
-            if 'min_price' in filters:
-                if last_row['close'] < filters['min_price']:
-                    passes_filter = False
-            
-            if 'max_price' in filters:
-                if last_row['close'] > filters['max_price']:
-                    passes_filter = False
-            
-            if 'min_turnover' in filters:
-                turnover = last_row.get('turnover', 0)
-                if turnover < filters['min_turnover']:
-                    passes_filter = False
-            
-            if passes_filter:
-                filtered_results.append(r)
-        
-        return filtered_results
+        return self.scan_latest(strategy, period, filters=filters, max_results=max_results)
 
 
 def scan_today_breakout(data_dir: str = 'data/kline_data',
                         lookback_start: int = 5,
                         lookback_end: int = 50,
                         confirm_days: int = 4,
-                        filters: Dict[str, Any] = None) -> pd.DataFrame:
+                        filters: Dict[str, Any] = None,
+                        max_results: int = 100) -> pd.DataFrame:
     """
     扫描今日突破股票的便捷函数
     
@@ -259,21 +279,23 @@ def scan_today_breakout(data_dir: str = 'data/kline_data',
         lookback_end: 回溯结束天数
         confirm_days: 确认天数
         filters: 过滤条件
+        max_results: 最大结果数量，默认100
         
     Returns:
         DataFrame: 突破股票列表
     """
     scanner = StockScanner(data_dir)
     
-    results = scanner.scan_breakout_stocks(
+    strategy = HighBreakoutStrategy(
         lookback_start=lookback_start,
         lookback_end=lookback_end,
         confirm_days=confirm_days
     )
     
     if filters:
-        strategy = HighBreakoutStrategy(lookback_start, lookback_end, confirm_days)
-        results = scanner.scan_with_filter(strategy, filters=filters)
+        results = scanner.scan_with_filter(strategy, filters=filters, max_results=max_results)
+    else:
+        results = scanner.scan_latest(strategy, period='daily', max_results=max_results)
     
     if not results:
         print("未找到满足条件的股票")
@@ -295,7 +317,8 @@ if __name__ == "__main__":
         data_dir='data/kline_data',
         lookback_start=5,
         lookback_end=50,
-        confirm_days=4
+        confirm_days=4,
+        max_results=100
     )
     
     if not results.empty:

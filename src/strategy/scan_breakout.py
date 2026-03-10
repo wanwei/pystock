@@ -58,32 +58,7 @@ def main():
         confirm_days=args.confirm_days
     )
     
-    results = scanner.scan_latest(strategy, period='daily')
-    
-    if filters:
-        filtered_results = []
-        for r in results:
-            stock_data = scanner._load_kline_data(r['symbol'], r['market'], 'daily')
-            if stock_data is None or len(stock_data) == 0:
-                continue
-            
-            last_row = stock_data.iloc[-1]
-            passes = True
-            
-            if 'min_volume' in filters:
-                if last_row.get('volume', 0) < filters['min_volume']:
-                    passes = False
-            if 'min_price' in filters:
-                if last_row['close'] < filters['min_price']:
-                    passes = False
-            if 'max_price' in filters:
-                if last_row['close'] > filters['max_price']:
-                    passes = False
-            
-            if passes:
-                filtered_results.append(r)
-        
-        results = filtered_results
+    results = scanner.scan_latest(strategy, period='daily', filters=filters if filters else None)
     
     print("=" * 70)
     print(f"扫描完成，找到 {len(results)} 只突破股票")
