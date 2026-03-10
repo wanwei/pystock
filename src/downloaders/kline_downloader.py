@@ -2,7 +2,7 @@ import requests
 import csv
 import os
 from datetime import datetime, timedelta
-from config import FINNHUB_API_KEY
+from ..config import FINNHUB_API_KEY
 import finnhub
 
 
@@ -319,7 +319,7 @@ if __name__ == "__main__":
         
         elif choice == '3':
             import json
-            from config import STOCKS_CONFIG_PATH
+            from ..config import STOCKS_CONFIG_PATH
             
             if os.path.exists(STOCKS_CONFIG_PATH):
                 with open(STOCKS_CONFIG_PATH, 'r', encoding='utf-8') as f:

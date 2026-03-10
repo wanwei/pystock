@@ -10,7 +10,7 @@ echo ============================================================
 echo.
 
 echo [Step 1/2] Updating stock list...
-python src/stock_list_downloader.py
+python src/downloaders/stock_list_downloader.py
 if errorlevel 1 (
     echo Stock list update failed!
     pause

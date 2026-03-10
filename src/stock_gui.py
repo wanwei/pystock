@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 import requests
 import finnhub
 import threading
-from config import FINNHUB_API_KEY, STOCKS_CONFIG_PATH
+from config import FINNHUB_API_KEY
+from data_manager import StockDataManager
 from kline_manager import KLineManager
 
 
@@ -73,8 +74,8 @@ class StockGUI:
             self.finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
         
         self.eastmoney_client = EastMoneyAPI()
+        self.data_manager = StockDataManager()
         self.kline_manager = KLineManager()
-        self.stocks_config = self.load_stocks_config()
         
         self.current_frame = None
         self.cached_quotes = {}
@@ -93,23 +94,6 @@ class StockGUI:
         self.current_stock_index = -1
         
         self.show_stock_list()
-    
-    def load_stocks_config(self):
-        if os.path.exists(STOCKS_CONFIG_PATH):
-            try:
-                with open(STOCKS_CONFIG_PATH, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"加载股票配置文件失败: {e}")
-                return {"stocks": [], "refresh_interval": 5}
-        return {"stocks": [], "refresh_interval": 5}
-    
-    def save_stocks_config(self):
-        try:
-            with open(STOCKS_CONFIG_PATH, 'w', encoding='utf-8') as f:
-                json.dump(self.stocks_config, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            messagebox.showerror("错误", f"保存配置文件失败: {e}")
     
     def clear_frame(self):
         if self.current_frame:
@@ -172,7 +156,7 @@ class StockGUI:
         for item in self.tree.get_children():
             self.tree.delete(item)
         
-        stocks = self.stocks_config.get('stocks', [])
+        stocks = self.data_manager.get_stock_list()
         has_cache = False
         
         for stock in stocks:
@@ -204,7 +188,7 @@ class StockGUI:
         thread.start()
     
     def _fetch_quotes_thread(self):
-        stocks = self.stocks_config.get('stocks', [])
+        stocks = self.data_manager.get_stock_list()
         results = []
         
         for stock in stocks:
@@ -394,7 +378,7 @@ class StockGUI:
         self._switch_stock(1)
     
     def _switch_stock(self, direction):
-        stocks = self.stocks_config.get('stocks', [])
+        stocks = self.data_manager.get_stock_list()
         if not stocks:
             return
         

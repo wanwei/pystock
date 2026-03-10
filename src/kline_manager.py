@@ -185,6 +185,318 @@ class KLineManager:
         df.to_csv(filepath, index=False, encoding='utf-8')
         print(f"数据已保存: {filepath}")
     
+    def _parse_latest_date(self, latest_date_str, period):
+        """
+        解析最新日期字符串，区分日线和分钟线格式
+        
+        Args:
+            latest_date_str: 日期字符串
+            period: 周期
+            
+        Returns:
+            datetime: 解析后的日期时间对象
+        """
+        if not latest_date_str:
+            return None
+        
+        try:
+            latest_str = str(latest_date_str).strip()
+            
+            if ' ' not in latest_str:
+                return datetime.strptime(latest_str, '%Y-%m-%d')
+            
+            if '.' in latest_str:
+                latest_str = latest_str.split('.')[0]
+            
+            time_formats = [
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d %H:%M',
+            ]
+            
+            for fmt in time_formats:
+                try:
+                    return datetime.strptime(latest_str, fmt)
+                except ValueError:
+                    continue
+            
+            print(f"解析日期失败: {latest_date_str}, 不支持的格式")
+            return None
+            
+        except Exception as e:
+            print(f"解析日期失败: {latest_date_str}, {e}")
+            return None
+    
+    def _calc_start_date(self, latest_date, period):
+        """
+        计算增量下载的起始日期
+        
+        Args:
+            latest_date: 本地最新日期 (datetime)
+            period: 周期
+            
+        Returns:
+            str: 起始日期字符串 (格式: '20240115')
+        """
+        if latest_date is None:
+            return None
+        
+        if period == 'daily':
+            start_date = latest_date + timedelta(days=1)
+        else:
+            start_date = latest_date + timedelta(minutes=1)
+        
+        return start_date.strftime('%Y%m%d')
+    
+    def _need_update(self, latest_date, period, filepath=None):
+        """
+        判断是否需要更新数据
+        
+        核心判断逻辑：
+        1. 如果本地数据的最后交易日就是当前交易日（今天）
+        2. 且数据文件的最后修改时间已超过当日15:30
+        3. 则说明今天收盘后的数据已经下载完成，无需再次更新
+        
+        原理说明：
+        - A股交易日收盘时间为15:00
+        - 数据源通常在收盘后30分钟内（约15:30）完成数据整理
+        - 如果文件在15:30之后被修改过，且数据日期是今天，说明数据已完整
+        - 此判断可避免重复下载已完成的数据，节省API调用次数
+        
+        Args:
+            latest_date: 本地最新日期 (datetime)
+            period: 周期
+            filepath: 数据文件路径，用于检查文件修改时间
+            
+        Returns:
+            bool: 是否需要更新
+        """
+        if latest_date is None:
+            return True
+        
+        now = datetime.now()
+        
+        if period == 'daily':
+            today_end = datetime(now.year, now.month, now.day, 15, 0, 0)
+            if latest_date >= today_end:
+                return False
+            if now.hour < 15 and latest_date.date() == now.date():
+                return False
+            
+            if filepath and os.path.exists(filepath):
+                file_mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
+                cutoff_time = datetime(now.year, now.month, now.day, 15, 30, 0)
+                
+                if (latest_date.date() == now.date() and 
+                    file_mtime >= cutoff_time):
+                    return False
+        else:
+            if latest_date >= now - timedelta(minutes=5):
+                return False
+            
+            if filepath and os.path.exists(filepath):
+                file_mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
+                cutoff_time = datetime(now.year, now.month, now.day, 15, 30, 0)
+                
+                latest_date_str = latest_date.strftime('%Y-%m-%d')
+                today_str = now.strftime('%Y-%m-%d')
+                
+                if (latest_date_str == today_str and 
+                    file_mtime >= cutoff_time):
+                    return False
+        
+        return True
+    
+    def _merge_and_save(self, symbol, market, period, new_data):
+        """
+        合并新旧数据并保存
+        
+        Args:
+            symbol: 股票代码
+            market: 市场
+            period: 周期
+            new_data: 新下载的数据列表
+            
+        Returns:
+            bool: 是否成功
+        """
+        if not new_data:
+            print(f"{symbol} {period} 无新数据需要合并")
+            return False
+        
+        filepath = self._get_data_filepath(symbol, market, period)
+        
+        try:
+            old_df = None
+            if os.path.exists(filepath):
+                old_df = pd.read_csv(filepath)
+            
+            new_df = pd.DataFrame(new_data)
+            
+            if old_df is not None and len(old_df) > 0:
+                combined_df = pd.concat([old_df, new_df], ignore_index=True)
+                combined_df['date'] = combined_df['date'].astype(str)
+                combined_df = combined_df.drop_duplicates(subset=['date'], keep='last')
+                combined_df = combined_df.sort_values('date')
+            else:
+                combined_df = new_df
+                combined_df['date'] = combined_df['date'].astype(str)
+                combined_df = combined_df.sort_values('date')
+            
+            stock_dir = self._ensure_stock_dir(symbol, market)
+            combined_df.to_csv(filepath, index=False, encoding='utf-8')
+            
+            print(f"{symbol} {period} 增量更新完成: 新增 {len(new_data)} 条，合并后共 {len(combined_df)} 条")
+            return True
+            
+        except Exception as e:
+            print(f"合并数据失败: {e}")
+            return False
+    
+    def update_kline_data(self, symbol, market, period):
+        """
+        增量更新K线数据
+        
+        Args:
+            symbol: 股票代码
+            market: 市场
+            period: 周期
+            
+        Returns:
+            bool: 是否成功
+        """
+        period_name = self.PERIODS.get(period, {}).get('name', period)
+        
+        if market != 'A股':
+            print(f"暂不支持 {market} 市场的增量更新")
+            return False
+        
+        local_info = self.check_local_data(symbol, market, period)
+        
+        if not local_info['exists'] or not local_info['latest_date']:
+            print(f"{symbol} {period_name} 本地无数据，执行全量下载...")
+            return self.download_kline_data(symbol, market, period)
+        
+        latest_date = self._parse_latest_date(local_info['latest_date'], period)
+        
+        if latest_date is None:
+            print(f"{symbol} {period_name} 解析日期失败，执行全量下载...")
+            return self.download_kline_data(symbol, market, period)
+        
+        filepath = local_info.get('filepath')
+        if not self._need_update(latest_date, period, filepath):
+            print(f"{symbol} {period_name} 数据已是最新，跳过更新")
+            return True
+        
+        start_date = self._calc_start_date(latest_date, period)
+        end_date = datetime.now().strftime('%Y%m%d')
+        
+        print(f"{symbol} {period_name} 增量更新: {start_date} -> {end_date}")
+        
+        new_data = self.downloader.download_kline(
+            symbol, 
+            period=period, 
+            start_date=start_date, 
+            end_date=end_date
+        )
+        
+        if new_data is None or len(new_data) == 0:
+            print(f"{symbol} {period_name} 无新数据")
+            return True
+        
+        return self._merge_and_save(symbol, market, period, new_data)
+    
+    def sync_all_stocks_incremental(self, periods=None):
+        """
+        增量同步所有股票数据
+        
+        Args:
+            periods: 要同步的周期列表，None表示全部周期
+            
+        Returns:
+            dict: 同步结果
+        """
+        if not self.stock_list:
+            self.load_stock_list()
+        
+        if not self.stock_list:
+            print("没有配置任何股票")
+            return {}
+        
+        if periods is None:
+            periods = list(self.PERIODS.keys())
+        
+        results = {
+            'success': [],
+            'failed': [],
+            'skipped': [],
+            'details': {}
+        }
+        
+        total = len(self.stock_list)
+        
+        for i, stock in enumerate(self.stock_list, 1):
+            symbol = stock.get('symbol')
+            market = stock.get('market', 'A股')
+            name = stock.get('name', '')
+            
+            print(f"\n{'='*60}")
+            print(f"[{i}/{total}] 增量更新: {symbol} - {name} ({market})")
+            print(f"{'='*60}")
+            
+            stock_result = {'market': market, 'periods': {}}
+            all_success = True
+            all_skipped = True
+            
+            for period in periods:
+                period_name = self.PERIODS.get(period, {}).get('name', period)
+                
+                try:
+                    local_info = self.check_local_data(symbol, market, period)
+                    
+                    if not local_info['exists']:
+                        print(f"{symbol} {period_name} 本地无数据，执行全量下载...")
+                        success = self.download_kline_data(symbol, market, period)
+                        all_skipped = False
+                    else:
+                        success = self.update_kline_data(symbol, market, period)
+                        if success:
+                            local_info_after = self.check_local_data(symbol, market, period)
+                            if local_info['latest_date'] == local_info_after['latest_date']:
+                                pass
+                    
+                    stock_result['periods'][period] = success
+                    
+                    if not success:
+                        all_success = False
+                        all_skipped = False
+                        
+                except Exception as e:
+                    print(f"{symbol} {period_name} 更新失败: {e}")
+                    stock_result['periods'][period] = False
+                    all_success = False
+                    all_skipped = False
+            
+            if all_success:
+                if all_skipped:
+                    results['skipped'].append(symbol)
+                else:
+                    results['success'].append(symbol)
+            else:
+                results['failed'].append(symbol)
+            
+            results['details'][symbol] = stock_result
+        
+        print(f"\n{'='*60}")
+        print("增量同步完成")
+        print(f"成功: {len(results['success'])} 只")
+        print(f"跳过: {len(results['skipped'])} 只 (已是最新)")
+        print(f"失败: {len(results['failed'])} 只")
+        if results['failed']:
+            print(f"失败股票: {', '.join(results['failed'][:20])}{'...' if len(results['failed']) > 20 else ''}")
+        print(f"{'='*60}")
+        
+        return results
+    
     def ensure_kline_data(self, symbol, market, periods=None, force_download=False):
         if periods is None:
             periods = list(self.PERIODS.keys())
@@ -341,13 +653,14 @@ if __name__ == "__main__":
     while True:
         print("\n请选择操作:")
         print("1. 查看数据状态")
-        print("2. 同步所有股票数据")
-        print("3. 下载单只股票数据")
-        print("4. 强制重新下载所有数据")
-        print("5. 查看本地股票目录")
-        print("6. 退出")
+        print("2. 增量同步所有股票数据 (推荐)")
+        print("3. 全量同步所有股票数据")
+        print("4. 下载/更新单只股票数据")
+        print("5. 强制重新下载所有数据")
+        print("6. 查看本地股票目录")
+        print("7. 退出")
         
-        choice = input("\n请输入选项 (1-6): ").strip()
+        choice = input("\n请输入选项 (1-7): ").strip()
         
         if choice == '1':
             manager.show_data_status()
@@ -373,12 +686,40 @@ if __name__ == "__main__":
             else:
                 periods = None
             
-            manager.sync_all_stocks(periods=periods)
+            manager.sync_all_stocks_incremental(periods=periods)
         
         elif choice == '3':
+            print("\n选择要同步的周期:")
+            print("1. 全部周期 (1分、5分、15分、1小时、日线)")
+            print("2. 仅日线")
+            print("3. 日线 + 1小时")
+            print("4. 自定义")
+            
+            sub_choice = input("请选择 (1-4): ").strip()
+            
+            if sub_choice == '1':
+                periods = None
+            elif sub_choice == '2':
+                periods = ['daily']
+            elif sub_choice == '3':
+                periods = ['daily', '1hour']
+            elif sub_choice == '4':
+                custom = input("输入周期 (用逗号分隔，如: daily,1hour,15min): ").strip()
+                periods = [p.strip() for p in custom.split(',')]
+            else:
+                periods = None
+            
+            manager.sync_all_stocks(periods=periods)
+        
+        elif choice == '4':
             manager.load_stock_list()
             symbol = input("请输入股票代码: ").strip()
             market = input("请输入市场 (美股/A股): ").strip() or 'A股'
+            
+            print("\n更新模式:")
+            print("1. 增量更新 (推荐)")
+            print("2. 全量下载")
+            update_mode = input("请选择 (1-2，默认1): ").strip() or '1'
             
             print("\n可选周期: 1min, 5min, 15min, 1hour, daily")
             custom = input("输入周期 (用逗号分隔，默认全部): ").strip()
@@ -387,14 +728,19 @@ if __name__ == "__main__":
             else:
                 periods = None
             
-            manager.ensure_kline_data(symbol, market, periods)
+            if update_mode == '2':
+                for period in (periods or list(manager.PERIODS.keys())):
+                    manager.download_kline_data(symbol, market, period)
+            else:
+                for period in (periods or list(manager.PERIODS.keys())):
+                    manager.update_kline_data(symbol, market, period)
         
-        elif choice == '4':
+        elif choice == '5':
             confirm = input("确定要强制重新下载所有数据吗? (y/n): ").strip().lower()
             if confirm == 'y':
                 manager.sync_all_stocks(force_download=True)
         
-        elif choice == '5':
+        elif choice == '6':
             stock_dirs = manager.list_stock_directories()
             if stock_dirs:
                 print(f"\n本地股票数据目录 ({len(stock_dirs)} 个):")
@@ -403,7 +749,7 @@ if __name__ == "__main__":
             else:
                 print("\n暂无本地数据目录")
         
-        elif choice == '6':
+        elif choice == '7':
             print("再见！")
             break
         
