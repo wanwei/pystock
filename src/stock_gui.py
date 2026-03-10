@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import json
 import os
 from datetime import datetime, timedelta
@@ -93,6 +93,13 @@ class StockGUI:
         self.info_label_items = []
         self.current_stock_index = -1
         
+        self.is_showing_stock_list = False
+        self.current_page = 1
+        self.page_size = 100
+        self.total_stocks = 0
+        self.all_stocks_data = []
+        self.message_log = []
+        
         self.show_stock_list()
     
     def clear_frame(self):
@@ -109,11 +116,26 @@ class StockGUI:
         title_label = ttk.Label(self.current_frame, text="股票列表", font=('Microsoft YaHei', 16, 'bold'))
         title_label.pack(pady=(0, 10))
         
-        hint_label = ttk.Label(self.current_frame, text="双击或选中后按回车查看K线图", font=('Microsoft YaHei', 10))
-        hint_label.pack(pady=(0, 10))
+        btn_frame = ttk.Frame(self.current_frame)
+        btn_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.refresh_btn = ttk.Button(btn_frame, text="刷新行情", command=self.start_refresh_quotes)
+        self.refresh_btn.pack(side=tk.LEFT, padx=5)
+        
+        kline_btn = ttk.Button(btn_frame, text="查看K线", command=self.view_kline)
+        kline_btn.pack(side=tk.LEFT, padx=5)
+        
+        load_btn = ttk.Button(btn_frame, text="装载列表", command=self.load_config_file)
+        load_btn.pack(side=tk.LEFT, padx=5)
+        
+        main_frame = ttk.Frame(self.current_frame)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        left_frame = ttk.Frame(main_frame)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         columns = ('symbol', 'name', 'market', 'price', 'change', 'change_pct')
-        self.tree = ttk.Treeview(self.current_frame, columns=columns, show='headings', height=20)
+        self.tree = ttk.Treeview(left_frame, columns=columns, show='headings', height=20)
         
         self.tree.heading('symbol', text='代码')
         self.tree.heading('name', text='名称')
@@ -129,7 +151,7 @@ class StockGUI:
         self.tree.column('change', width=100, anchor='center')
         self.tree.column('change_pct', width=100, anchor='center')
         
-        scrollbar = ttk.Scrollbar(self.current_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        scrollbar = ttk.Scrollbar(left_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -138,51 +160,157 @@ class StockGUI:
         self.tree.bind('<Double-1>', self.on_double_click)
         self.tree.bind('<Return>', self.on_enter_key)
         
-        btn_frame = ttk.Frame(self.current_frame)
-        btn_frame.pack(fill=tk.X, pady=10)
+        right_frame = ttk.Frame(main_frame, width=250)
+        right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
+        right_frame.pack_propagate(False)
         
-        self.refresh_btn = ttk.Button(btn_frame, text="刷新行情", command=self.start_refresh_quotes)
-        self.refresh_btn.pack(side=tk.LEFT, padx=5)
+        msg_title = ttk.Label(right_frame, text="消息栏", font=('Microsoft YaHei', 11, 'bold'))
+        msg_title.pack(pady=(0, 5))
         
-        self.status_label = ttk.Label(btn_frame, text="", font=('Microsoft YaHei', 10))
+        self.msg_text = tk.Text(right_frame, wrap=tk.WORD, font=('Microsoft YaHei', 9), state='disabled')
+        msg_scrollbar = ttk.Scrollbar(right_frame, orient=tk.VERTICAL, command=self.msg_text.yview)
+        self.msg_text.configure(yscrollcommand=msg_scrollbar.set)
+        
+        self.msg_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        msg_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        page_frame = ttk.Frame(self.current_frame)
+        page_frame.pack(fill=tk.X, pady=5)
+        
+        self.page_label = ttk.Label(page_frame, text="", font=('Microsoft YaHei', 10))
+        self.page_label.pack(side=tk.LEFT, padx=10)
+        
+        self.prev_btn = ttk.Button(page_frame, text="上一页", command=self.prev_page)
+        self.prev_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.next_btn = ttk.Button(page_frame, text="下一页", command=self.next_page)
+        self.next_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.status_label = ttk.Label(page_frame, text="", font=('Microsoft YaHei', 10))
         self.status_label.pack(side=tk.LEFT, padx=20)
         
-        kline_btn = ttk.Button(btn_frame, text="查看K线", command=self.view_kline)
-        kline_btn.pack(side=tk.LEFT, padx=5)
-        
-        self._display_cached_quotes()
+        self._init_page_data()
     
-    def _display_cached_quotes(self):
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        
+    def _init_page_data(self):
         stocks = self.data_manager.get_stock_list()
-        has_cache = False
+        self.total_stocks = len(stocks)
+        self.all_stocks_data = []
         
         for stock in stocks:
             symbol = stock.get('symbol', '')
             name = stock.get('name', '')
             market = stock.get('market', '美股')
-            
             cache_key = f"{symbol}_{market}"
+            
             if cache_key in self.cached_quotes:
-                has_cache = True
                 cached = self.cached_quotes[cache_key]
-                self.tree.insert('', tk.END, values=(
-                    symbol, name, market, 
-                    cached['price'], cached['change'], cached['change_pct']
-                ))
+                self.all_stocks_data.append({
+                    'symbol': symbol,
+                    'name': name,
+                    'market': market,
+                    'price': cached['price'],
+                    'change': cached['change'],
+                    'change_pct': cached['change_pct']
+                })
             else:
-                self.tree.insert('', tk.END, values=(symbol, name, market, '加载中...', '加载中...', '加载中'))
+                self.all_stocks_data.append({
+                    'symbol': symbol,
+                    'name': name,
+                    'market': market,
+                    'price': '加载中...',
+                    'change': '加载中...',
+                    'change_pct': '加载中'
+                })
         
-        if has_cache:
-            self.status_label.config(text="使用缓存数据，点击刷新获取最新行情")
-        else:
+        self.current_page = 1
+        self._update_page_display()
+        self._update_page_buttons()
+        self.add_message(f"已加载 {self.total_stocks} 只股票")
+    
+    def _update_page_display(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        start_idx = (self.current_page - 1) * self.page_size
+        end_idx = min(start_idx + self.page_size, self.total_stocks)
+        
+        for i in range(start_idx, end_idx):
+            data = self.all_stocks_data[i]
+            self.tree.insert('', tk.END, values=(
+                data['symbol'], data['name'], data['market'],
+                data['price'], data['change'], data['change_pct']
+            ))
+        
+        total_pages = (self.total_stocks + self.page_size - 1) // self.page_size
+        self.page_label.config(text=f"第 {self.current_page}/{total_pages} 页 (共 {self.total_stocks} 只股票)")
+    
+    def _update_page_buttons(self):
+        total_pages = (self.total_stocks + self.page_size - 1) // self.page_size
+        self.prev_btn.config(state='normal' if self.current_page > 1 else 'disabled')
+        self.next_btn.config(state='normal' if self.current_page < total_pages else 'disabled')
+    
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self._update_page_display()
+            self._update_page_buttons()
+    
+    def next_page(self):
+        total_pages = (self.total_stocks + self.page_size - 1) // self.page_size
+        if self.current_page < total_pages:
+            self.current_page += 1
+            self._update_page_display()
+            self._update_page_buttons()
+    
+    def add_message(self, msg):
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        self.message_log.append(f"[{timestamp}] {msg}")
+        
+        self.msg_text.config(state='normal')
+        self.msg_text.insert(tk.END, f"[{timestamp}] {msg}\n")
+        self.msg_text.see(tk.END)
+        self.msg_text.config(state='disabled')
+    
+    def load_config_file(self):
+        file_path = filedialog.askopenfilename(
+            title="选择配置文件",
+            filetypes=[("JSON文件", "*.json"), ("所有文件", "*.*")],
+            initialdir=os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config')
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                config_data = json.load(f)
+            
+            if 'stocks' not in config_data:
+                messagebox.showerror("错误", "配置文件格式错误：缺少stocks字段")
+                return
+            
+            config = self.data_manager.load_stocks_config()
+            config['stocks'] = config_data['stocks']
+            self.data_manager.save_stocks_config(config)
+            self.data_manager._config_cache = None
+            
+            self.cached_quotes = {}
+            self.add_message(f"已从 {os.path.basename(file_path)} 装载 {len(config_data['stocks'])} 只股票")
+            
+            self._init_page_data()
             self.start_refresh_quotes()
+            
+        except Exception as e:
+            messagebox.showerror("错误", f"装载配置文件失败: {str(e)}")
+            self.add_message(f"装载失败: {str(e)}")
+    
+    def _display_cached_quotes(self):
+        self._init_page_data()
     
     def start_refresh_quotes(self):
         self.refresh_btn.config(state='disabled')
         self.status_label.config(text="正在刷新...")
+        self.add_message("开始刷新行情数据...")
         
         thread = threading.Thread(target=self._fetch_quotes_thread, daemon=True)
         thread.start()
@@ -222,14 +350,22 @@ class StockGUI:
         self.root.after(0, lambda: self._update_quotes_ui(results))
     
     def _update_quotes_ui(self, results):
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        
+        self.all_stocks_data = []
         for data in results:
-            self.tree.insert('', tk.END, values=data)
+            self.all_stocks_data.append({
+                'symbol': data[0],
+                'name': data[1],
+                'market': data[2],
+                'price': data[3],
+                'change': data[4],
+                'change_pct': data[5]
+            })
+        
+        self._update_page_display()
         
         self.refresh_btn.config(state='normal')
         self.status_label.config(text=f"刷新完成 {datetime.now().strftime('%H:%M:%S')}")
+        self.add_message(f"行情刷新完成，共 {len(results)} 只股票")
     
     def get_stock_quote(self, symbol, market='美股'):
         if market == 'A股':
