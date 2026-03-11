@@ -22,10 +22,11 @@ class KLineChartWidget(ttk.Frame):
         'daily': '日线'
     }
     
-    def __init__(self, parent, on_period_change=None, **kwargs):
+    def __init__(self, parent, on_period_change=None, on_stock_change=None, **kwargs):
         super().__init__(parent, **kwargs)
         
         self.on_period_change = on_period_change
+        self.on_stock_change = on_stock_change
         
         self.current_kline_data = None
         self.current_period = 'daily'
@@ -67,12 +68,16 @@ class KLineChartWidget(ttk.Frame):
         root.bind('<Down>', self._on_key_down)
         root.bind('<Left>', self._on_key_left)
         root.bind('<Right>', self._on_key_right)
+        root.bind('<Prior>', self._on_page_up)
+        root.bind('<Next>', self._on_page_down)
     
     def unbind_keys(self, root):
         root.unbind('<Up>')
         root.unbind('<Down>')
         root.unbind('<Left>')
         root.unbind('<Right>')
+        root.unbind('<Prior>')
+        root.unbind('<Next>')
     
     def set_data(self, kline_data, period='daily'):
         self.current_kline_data = kline_data
@@ -155,6 +160,14 @@ class KLineChartWidget(ttk.Frame):
             if self.display_start + self.display_count < total:
                 self.display_start = min(total - self.display_count, self.display_start + 10)
                 self._redraw()
+    
+    def _on_page_up(self, event):
+        if self.on_stock_change:
+            self.on_stock_change(-1)
+    
+    def _on_page_down(self, event):
+        if self.on_stock_change:
+            self.on_stock_change(1)
     
     def _update_status(self):
         if self.current_kline_data:

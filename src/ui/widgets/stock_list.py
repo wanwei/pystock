@@ -155,26 +155,29 @@ class StockListWidget(ttk.Frame):
     
     def _on_tree_select(self, event):
         if self.on_select:
-            selected = self.tree.selection()
-            if selected:
-                item = self.tree.item(selected[0])
-                self.on_select(item['values'])
+            stock = self.get_selected_stock()
+            if stock:
+                self.on_select(stock)
     
     def _on_tree_double_click(self, event):
         if self.on_double_click:
-            selected = self.tree.selection()
-            if selected:
-                item = self.tree.item(selected[0])
-                self.on_double_click(item['values'])
+            stock = self.get_selected_stock()
+            if stock:
+                self.on_double_click(stock)
     
     def get_selected_stock(self):
         selected = self.tree.selection()
         if not selected:
             return None
-        item = self.tree.item(selected[0])
-        values = item['values']
-        return {
-            'symbol': values[0],
-            'name': values[1],
-            'market': values[2]
-        }
+        
+        item_id = selected[0]
+        children = self.tree.get_children()
+        idx = children.index(item_id)
+        
+        start_idx = (self.current_page - 1) * self.page_size
+        actual_idx = start_idx + idx
+        
+        if actual_idx < len(self.all_stocks_data):
+            return self.all_stocks_data[actual_idx]
+        
+        return None

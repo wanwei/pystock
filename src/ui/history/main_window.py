@@ -76,10 +76,17 @@ class HistoryAnalysisApp:
         )
         self.stock_list.pack(fill=tk.BOTH, expand=True)
     
-    def _on_stock_double_click(self, values):
-        self.current_symbol = values[0]
-        self.current_name = values[1]
-        self.current_market = values[2]
+    def _on_stock_double_click(self, stock):
+        self.current_symbol = stock['symbol']
+        self.current_name = stock['name']
+        self.current_market = stock['market']
+        
+        stocks = self.data_manager.get_stock_list()
+        for i, s in enumerate(stocks):
+            if s.get('symbol') == self.current_symbol and s.get('market') == self.current_market:
+                self.current_stock_index = i
+                break
+        
         self._show_kline_view()
     
     def _show_kline_view(self):
@@ -91,9 +98,10 @@ class HistoryAnalysisApp:
         header_frame = ttk.Frame(self.main_frame)
         header_frame.pack(fill=tk.X, pady=(0, 10))
         
-        ttk.Label(header_frame, 
+        self.header_label = ttk.Label(header_frame, 
                   text=f"{self.current_name} ({self.current_symbol}) - {self.current_market}",
-                  font=('Microsoft YaHei', 16, 'bold')).pack(side=tk.LEFT)
+                  font=('Microsoft YaHei', 16, 'bold'))
+        self.header_label.pack(side=tk.LEFT)
         
         btn_frame = ttk.Frame(self.main_frame)
         btn_frame.pack(fill=tk.X, pady=5)
@@ -104,12 +112,38 @@ class HistoryAnalysisApp:
         
         self.kline_chart = KLineChartWidget(
             self.main_frame,
-            on_period_change=self._on_period_change
+            on_period_change=self._on_period_change,
+            on_stock_change=self._on_stock_change
         )
         self.kline_chart.pack(fill=tk.BOTH, expand=True)
         self.kline_chart.bind_keys(self.root)
         
         self._load_kline_data()
+    
+    def _on_stock_change(self, direction):
+        stocks = self.data_manager.get_stock_list()
+        if not stocks:
+            return
+        
+        new_index = self.current_stock_index + direction
+        if new_index < 0:
+            new_index = len(stocks) - 1
+        elif new_index >= len(stocks):
+            new_index = 0
+        
+        self.current_stock_index = new_index
+        stock = stocks[new_index]
+        
+        self.current_symbol = stock.get('symbol', '')
+        self.current_name = stock.get('name', '')
+        self.current_market = stock.get('market', '美股')
+        
+        self.root.title(f"股票历史分析系统 - {self.current_name} ({self.current_symbol})")
+        
+        if hasattr(self, 'header_label'):
+            self.header_label.config(text=f"{self.current_name} ({self.current_symbol}) - {self.current_market}")
+        
+        self._load_kline_data(self.kline_chart.current_period)
     
     def _on_period_change(self, period):
         self._load_kline_data(period)
@@ -129,24 +163,13 @@ class HistoryAnalysisApp:
         self.root.after(0, lambda: self.kline_chart.set_data(kline_data, period))
     
     def _refresh_kline(self):
-        self.kline_manager.download_kline_data(
-            self.current_symbol, 
-            self.current_market, 
-            self.kline_chart.current_period
-        )
         self._load_kline_data(self.kline_chart.current_period)
     
     def _get_stock_kline(self, symbol, market, period='daily'):
         try:
-            df = self.kline_manager.get_kline_data(symbol, market, period)
+            df = self.kline_manager.get_data(symbol, market, period)
             
-            if df is None:
-                is_sufficient, _ = self.kline_manager.is_data_sufficient(symbol, market, period)
-                if not is_sufficient:
-                    self.kline_manager.download_kline_data(symbol, market, period)
-                    df = self.kline_manager.get_kline_data(symbol, market, period)
-            
-            if df is None:
+            if df is None or df.empty:
                 return None
             
             kline_data = []
@@ -173,7 +196,15 @@ class HistoryAnalysisApp:
         messagebox.showinfo("提示", "请在命令行运行 update_kline_data.py 更新数据")
     
     def _show_data_status(self):
-        self.kline_manager.show_data_status()
+        stocks = self.kline_manager.list_stocks()
+        if stocks:
+            print(f"共有 {len(stocks)} 只股票有K线数据")
+            for stock in stocks[:10]:
+                print(f"  {stock}")
+            if len(stocks) > 10:
+                print(f"  ... 还有 {len(stocks) - 10} 只")
+        else:
+            print("暂无K线数据")
     
     def _open_backtest(self):
         messagebox.showinfo("提示", "回测功能开发中...")
