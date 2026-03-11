@@ -1,9 +1,29 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
+import pandas as pd
+import os
 
 from datamgr import StockDataManager, KLineManager
+from datamgr.stock_filter import StockFilter
 from ui.widgets import StockListWidget, KLineChartWidget
+from ui.widgets.pattern_scanner_dialog import PatternScannerDialog
+from .backtest_config_dialog import BacktestConfigDialog
+from .backtest_result_window import BacktestResultWindow
+from strategy.backtest import SimpleBacktest, VectorizedBacktest
+from strategy.strategies import (
+    MACrossStrategy, MACDStrategy, RSIStrategy, 
+    HighBreakoutStrategy, CompositeStrategy
+)
+
+
+STRATEGY_CLASSES = {
+    '均线交叉策略': MACrossStrategy,
+    'MACD策略': MACDStrategy,
+    'RSI策略': RSIStrategy,
+    '高点突破策略': HighBreakoutStrategy,
+    '组合策略': CompositeStrategy
+}
 
 
 class HistoryAnalysisApp:
@@ -207,10 +227,147 @@ class HistoryAnalysisApp:
             print("暂无K线数据")
     
     def _open_backtest(self):
-        messagebox.showinfo("提示", "回测功能开发中...")
+        if not self.current_symbol:
+            messagebox.showwarning("提示", "请先选择一只股票")
+            return
+        
+        current_period = 'daily'
+        if hasattr(self, 'kline_chart') and self.kline_chart:
+            current_period = self.kline_chart.current_period
+        
+        dialog = BacktestConfigDialog(
+            self.root,
+            self.current_symbol,
+            self.current_market,
+            on_confirm=self._run_backtest,
+            current_period=current_period
+        )
+    
+    def _run_backtest(self, config):
+        if not config:
+            return
+        
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("回测中")
+        progress_window.geometry("300x100")
+        progress_window.resizable(False, False)
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        
+        ttk.Label(progress_window, text="正在执行回测，请稍候...", 
+                 font=('Microsoft YaHei', 10)).pack(pady=20)
+        
+        progress = ttk.Progressbar(progress_window, mode='indeterminate')
+        progress.pack(fill=tk.X, padx=20, pady=10)
+        progress.start()
+        
+        def run_backtest_thread():
+            try:
+                result = self._execute_backtest(config)
+                
+                self.root.after(0, lambda: progress_window.destroy())
+                self.root.after(0, lambda: self._show_backtest_result(result, config))
+                
+            except Exception as e:
+                self.root.after(0, lambda: progress_window.destroy())
+                self.root.after(0, lambda: messagebox.showerror("回测错误", str(e)))
+        
+        thread = threading.Thread(target=run_backtest_thread, daemon=True)
+        thread.start()
+    
+    def _execute_backtest(self, config):
+        df = self.kline_manager.get_data(
+            config['symbol'], 
+            config['market'], 
+            config.get('period', 'daily')
+        )
+        
+        if df is None or df.empty:
+            raise ValueError("无法获取K线数据")
+        
+        strategy_name = config['strategy_name']
+        strategy_params = config['strategy_params']
+        
+        strategy_class = STRATEGY_CLASSES.get(strategy_name)
+        if not strategy_class:
+            raise ValueError(f"未知策略: {strategy_name}")
+        
+        if strategy_name == '组合策略':
+            sub_strategies = [
+                MACrossStrategy(),
+                MACDStrategy(),
+                RSIStrategy()
+            ]
+            strategy = CompositeStrategy(
+                strategies=sub_strategies,
+                min_votes=strategy_params.get('min_votes', 2)
+            )
+        else:
+            strategy = strategy_class(**strategy_params)
+        
+        initial_capital = config['initial_capital']
+        commission_rate = config['commission_rate']
+        slippage = config['slippage']
+        
+        if config['backtest_engine'] == 'vectorized':
+            backtest = VectorizedBacktest(
+                strategy=strategy,
+                initial_capital=initial_capital,
+                commission_rate=commission_rate
+            )
+        else:
+            backtest = SimpleBacktest(
+                strategy=strategy,
+                initial_capital=initial_capital,
+                commission_rate=commission_rate,
+                slippage=slippage
+            )
+        
+        result = backtest.run(df)
+        
+        return {
+            'statistics': result,
+            'equity_curve': backtest.get_equity_curve(),
+            'trade_history': backtest.get_trade_history(),
+            'signals': strategy.generate_signals(df) if hasattr(strategy, 'generate_signals') else []
+        }
+    
+    def _show_backtest_result(self, result, config):
+        BacktestResultWindow(
+            self.root,
+            result['statistics'],
+            result['equity_curve'],
+            result['trade_history'],
+            result['signals'],
+            on_show_signals=self._show_signals_on_kline
+        )
+    
+    def _show_signals_on_kline(self, signals):
+        if hasattr(self, 'kline_chart') and self.kline_chart:
+            self.kline_chart.set_signals(signals)
     
     def _open_scanner(self):
-        messagebox.showinfo("提示", "扫描功能开发中...")
+        stock_filter = StockFilter(self.data_manager, self.data_manager.sector)
+        dialog = PatternScannerDialog(
+            self.root, 
+            stock_filter=stock_filter,
+            kline_manager=self.kline_manager,
+            on_load_stocks=self._load_scanned_stocks
+        )
+        dialog.transient(self.root)
+        dialog.grab_set()
+    
+    def _load_scanned_stocks(self, stocks):
+        if stocks:
+            for stock in stocks:
+                self.data_manager.add_stock(
+                    stock.get('symbol'),
+                    stock.get('name', stock.get('symbol')),
+                    stock.get('market', 'A股')
+                )
+            if hasattr(self, 'stock_list') and self.stock_list:
+                self.stock_list.refresh()
+            messagebox.showinfo("成功", f"已加载 {len(stocks)} 只股票到配置")
     
     def run(self):
         self.root.mainloop()

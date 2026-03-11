@@ -2,7 +2,7 @@ import os
 import sys
 import json
 import pandas as pd
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from datetime import datetime
 
 if __name__ == "__main__":
@@ -18,48 +18,33 @@ class StockScanner:
     """
     股票扫描器
     
-    在所有股票中搜索满足策略条件的股票
+    在指定股票列表中搜索满足策略条件的股票
+    支持外部传入K线数据管理器以利用缓存
     """
     
-    def __init__(self, data_dir: str = 'data/kline_data'):
+    def __init__(self, kline_manager=None, data_dir: str = 'data/kline_data'):
         """
         Args:
-            data_dir: K线数据目录
+            kline_manager: K线数据管理器实例（推荐传入，可利用缓存）
+            data_dir: K线数据目录（当kline_manager为None时使用）
         """
+        self.kline_manager = kline_manager
         self.data_dir = data_dir
-    
-    def _get_stock_list(self) -> List[Dict[str, str]]:
-        """获取所有有数据的股票列表"""
-        stocks = []
-        
-        if not os.path.exists(self.data_dir):
-            return stocks
-        
-        for item in os.listdir(self.data_dir):
-            item_path = os.path.join(self.data_dir, item)
-            if os.path.isdir(item_path):
-                if item.startswith('CN_'):
-                    symbol = item.replace('CN_', '')
-                    market = 'A股'
-                elif item.startswith('US_'):
-                    symbol = item.replace('US_', '')
-                    market = '美股'
-                elif item.startswith('HK_'):
-                    symbol = item.replace('HK_', '')
-                    market = '港股'
-                else:
-                    continue
-                
-                stocks.append({
-                    'symbol': symbol,
-                    'market': market,
-                    'dir': item
-                })
-        
-        return stocks
     
     def _load_kline_data(self, symbol: str, market: str, period: str = 'daily') -> Optional[pd.DataFrame]:
         """加载K线数据"""
+        if self.kline_manager:
+            try:
+                df = self.kline_manager.get_data(symbol, market, period)
+                if df is not None and not df.empty:
+                    if 'date' in df.columns:
+                        df['date'] = pd.to_datetime(df['date'])
+                        df = df.sort_values('date').reset_index(drop=True)
+                    return df
+            except Exception as e:
+                print(f"加载 {symbol} 数据失败: {e}")
+                return None
+        
         prefix = {'A股': 'CN', '美股': 'US', '港股': 'HK'}.get(market, 'CN')
         stock_dir = f"{prefix}_{symbol}"
         filepath = os.path.join(self.data_dir, stock_dir, f"{period}.csv")
@@ -77,28 +62,27 @@ class StockScanner:
             print(f"加载 {symbol} 数据失败: {e}")
             return None
     
-    def scan_latest(self, strategy: BaseStrategy, period: str = 'daily',
-                    min_data_days: int = 60, save_config: bool = True,
-                    config_dir: str = None, max_results: int = None,
+    def scan_stocks(self, stocks: List[Dict], strategy: BaseStrategy, period: str = 'daily',
+                    min_data_days: int = 60, max_results: int = None,
                     show_progress: bool = True,
-                    filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+                    filters: Dict[str, Any] = None,
+                    progress_callback: Callable = None) -> List[Dict[str, Any]]:
         """
-        扫描所有股票，找出最新一根K线满足策略条件的股票
+        扫描指定股票列表，找出最新一根K线满足策略条件的股票
         
         Args:
+            stocks: 要扫描的股票列表，每项包含 symbol, market, name
             strategy: 策略实例
             period: K线周期
             min_data_days: 最小数据天数要求
-            save_config: 是否保存结果到配置文件
-            config_dir: 配置文件目录，默认为 data_dir 同级的 config 目录
             max_results: 最大结果数量，None表示不限制
             show_progress: 是否显示进度信息
             filters: 过滤条件，如 {'min_volume': 1000000, 'min_price': 5}
+            progress_callback: 进度回调函数 callback(current, total, symbol, results_count)
             
         Returns:
             List[Dict]: 满足条件的股票列表
         """
-        stocks = self._get_stock_list()
         results = []
         total = len(stocks)
         
@@ -106,8 +90,12 @@ class StockScanner:
             print(f"正在扫描 {total} 只股票...")
         
         for i, stock in enumerate(stocks, 1):
-            symbol = stock['symbol']
-            market = stock['market']
+            symbol = stock.get('symbol', '')
+            market = stock.get('market', 'A股')
+            name = stock.get('name', '')
+            
+            if progress_callback:
+                progress_callback(i, total, symbol, len(results))
             
             if show_progress and i % 100 == 0:
                 pct = i / total * 100
@@ -145,43 +133,113 @@ class StockScanner:
                 if not passes_filter:
                     continue
             
-            signals = strategy.generate_signals(df)
-            
-            if not signals:
-                continue
-            
-            last_signal = signals[-1]
-            last_date = df['date'].iloc[-1] if 'date' in df.columns else df.index[-1]
-            
-            if isinstance(last_date, str):
-                last_date = pd.to_datetime(last_date)
-            
-            if last_signal.datetime.date() == last_date.date():
-                result = {
-                    'symbol': symbol,
-                    'market': market,
-                    'date': last_signal.datetime,
-                    'price': last_signal.price,
-                    'signal_type': last_signal.signal_type.value,
-                    'strength': last_signal.strength.value,
-                    'reason': last_signal.reason,
-                    'confidence': last_signal.confidence,
-                    'metadata': last_signal.metadata
-                }
-                results.append(result)
+            try:
+                signals = strategy.generate_signals(df)
                 
-                if max_results and len(results) >= max_results:
-                    if show_progress:
-                        print(f"  已达到最大结果数量 {max_results}，停止扫描")
-                    break
+                if not signals:
+                    continue
+                
+                last_signal = signals[-1]
+                last_date = df['date'].iloc[-1] if 'date' in df.columns else df.index[-1]
+                
+                if isinstance(last_date, str):
+                    last_date = pd.to_datetime(last_date)
+                
+                if last_signal.datetime.date() == last_date.date():
+                    result = {
+                        'symbol': symbol,
+                        'name': name,
+                        'market': market,
+                        'date': last_signal.datetime,
+                        'price': last_signal.price,
+                        'signal_type': last_signal.signal_type.value,
+                        'strength': last_signal.strength.value,
+                        'reason': last_signal.reason,
+                        'confidence': last_signal.confidence,
+                        'metadata': last_signal.metadata
+                    }
+                    results.append(result)
+                    
+                    if max_results and len(results) >= max_results:
+                        if show_progress:
+                            print(f"  已达到最大结果数量 {max_results}，停止扫描")
+                        break
+            except Exception as e:
+                pass
         
         if show_progress:
             print(f"  扫描完成: 共找到 {len(results)} 只突破股票")
+        
+        return results
+    
+    def scan_latest(self, strategy: BaseStrategy, period: str = 'daily',
+                    min_data_days: int = 60, save_config: bool = True,
+                    config_dir: str = None, max_results: int = None,
+                    show_progress: bool = True,
+                    filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """
+        扫描所有股票，找出最新一根K线满足策略条件的股票
+        
+        注意：此方法从数据目录获取股票列表，推荐使用 scan_stocks 方法传入股票列表
+        
+        Args:
+            strategy: 策略实例
+            period: K线周期
+            min_data_days: 最小数据天数要求
+            save_config: 是否保存结果到配置文件
+            config_dir: 配置文件目录，默认为 data_dir 同级的 config 目录
+            max_results: 最大结果数量，None表示不限制
+            show_progress: 是否显示进度信息
+            filters: 过滤条件，如 {'min_volume': 1000000, 'min_price': 5}
+            
+        Returns:
+            List[Dict]: 满足条件的股票列表
+        """
+        stocks = self._get_stock_list_from_dir()
+        results = self.scan_stocks(
+            stocks=stocks,
+            strategy=strategy,
+            period=period,
+            min_data_days=min_data_days,
+            max_results=max_results,
+            show_progress=show_progress,
+            filters=filters
+        )
         
         if save_config and results:
             self._save_results_to_config(results, config_dir)
         
         return results
+    
+    def _get_stock_list_from_dir(self) -> List[Dict[str, str]]:
+        """从数据目录获取所有有数据的股票列表"""
+        stocks = []
+        
+        if not os.path.exists(self.data_dir):
+            return stocks
+        
+        for item in os.listdir(self.data_dir):
+            item_path = os.path.join(self.data_dir, item)
+            if os.path.isdir(item_path):
+                if item.startswith('CN_'):
+                    symbol = item.replace('CN_', '')
+                    market = 'A股'
+                elif item.startswith('US_'):
+                    symbol = item.replace('US_', '')
+                    market = '美股'
+                elif item.startswith('HK_'):
+                    symbol = item.replace('HK_', '')
+                    market = '港股'
+                else:
+                    continue
+                
+                stocks.append({
+                    'symbol': symbol,
+                    'name': '',
+                    'market': market
+                })
+        
+        return stocks
     
     def _save_results_to_config(self, results: List[Dict[str, Any]], config_dir: str = None):
         """
@@ -284,7 +342,7 @@ def scan_today_breakout(data_dir: str = 'data/kline_data',
     Returns:
         DataFrame: 突破股票列表
     """
-    scanner = StockScanner(data_dir)
+    scanner = StockScanner(data_dir=data_dir)
     
     strategy = HighBreakoutStrategy(
         lookback_start=lookback_start,

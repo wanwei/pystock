@@ -33,6 +33,8 @@ class KLineChartWidget(ttk.Frame):
         self.display_count = 120
         self.display_start = 0
         self.crosshair_items = []
+        self.signal_items = []
+        self.signals = []
         
         self._create_widgets()
     
@@ -90,6 +92,14 @@ class KLineChartWidget(ttk.Frame):
             self._redraw()
         else:
             self._show_error("无法获取K线数据")
+    
+    def set_signals(self, signals):
+        self.signals = signals or []
+        self._redraw()
+    
+    def clear_signals(self):
+        self.signals = []
+        self._redraw()
     
     def _show_error(self, message):
         self.canvas.delete('all')
@@ -340,3 +350,67 @@ class KLineChartWidget(ttk.Frame):
                                text="价格", anchor='center', font=('Microsoft YaHei', 10), angle=90)
         self.canvas.create_text(canvas_width // 2, canvas_height - 15, 
                                text="日期", anchor='center', font=('Microsoft YaHei', 10))
+        
+        self._draw_signals(kline_data, margin_left, margin_top, chart_width, chart_height, 
+                          max_price, price_range, candle_gap)
+    
+    def _draw_signals(self, kline_data, margin_left, margin_top, chart_width, chart_height,
+                      max_price, price_range, candle_gap):
+        for item in self.signal_items:
+            try:
+                self.canvas.delete(item)
+            except:
+                pass
+        self.signal_items = []
+        
+        if not self.signals or not kline_data:
+            return
+        
+        date_to_index = {}
+        for i, data in enumerate(kline_data):
+            date_str = str(data.get('date', ''))
+            date_to_index[date_str] = i
+        
+        for signal in self.signals:
+            signal_time = signal.datetime if hasattr(signal, 'datetime') else signal.get('datetime')
+            signal_type = signal.signal_type if hasattr(signal, 'signal_type') else signal.get('signal_type')
+            signal_price = signal.price if hasattr(signal, 'price') else signal.get('price', 0)
+            
+            if signal_time is None:
+                continue
+            
+            date_str = str(signal_time)
+            if ' ' in date_str:
+                date_str = date_str.split(' ')[0]
+            
+            if date_str not in date_to_index:
+                continue
+            
+            i = date_to_index[date_str]
+            x = margin_left + i * candle_gap + candle_gap / 2
+            
+            y_signal = margin_top + (max_price - signal_price) / price_range * chart_height
+            
+            signal_type_str = signal_type.value if hasattr(signal_type, 'value') else str(signal_type)
+            
+            if 'open_long' in signal_type_str.lower():
+                arrow = self.canvas.create_polygon(
+                    x - 8, y_signal + 15,
+                    x + 8, y_signal + 15,
+                    x, y_signal,
+                    fill='#ff0000', outline='#cc0000'
+                )
+                text = self.canvas.create_text(x, y_signal + 25, text="买", 
+                                              font=('Microsoft YaHei', 8, 'bold'), fill='#ff0000')
+                self.signal_items.extend([arrow, text])
+            
+            elif 'close_long' in signal_type_str.lower():
+                arrow = self.canvas.create_polygon(
+                    x - 8, y_signal - 15,
+                    x + 8, y_signal - 15,
+                    x, y_signal,
+                    fill='#00aa00', outline='#008800'
+                )
+                text = self.canvas.create_text(x, y_signal - 25, text="卖", 
+                                              font=('Microsoft YaHei', 8, 'bold'), fill='#00aa00')
+                self.signal_items.extend([arrow, text])

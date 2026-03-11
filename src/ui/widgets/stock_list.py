@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+import threading
 
 
 class StockListWidget(ttk.Frame):
@@ -10,7 +11,10 @@ class StockListWidget(ttk.Frame):
     - 分页显示
     - 搜索筛选
     - 双击/回车选择
+    - 从K线数据获取补充信息（最新价、涨跌幅、数据量等）
     """
+    
+    COLUMNS = ('symbol', 'name', 'market', 'latest_price', 'change_pct', 'data_count', 'latest_date')
     
     def __init__(self, parent, data_manager, on_select=None, on_double_click=None, **kwargs):
         super().__init__(parent, **kwargs)
@@ -40,25 +44,35 @@ class StockListWidget(ttk.Frame):
         ttk.Button(btn_frame, text="搜索", command=self._on_search).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn_frame, text="重置", command=self._reset_search).pack(side=tk.LEFT, padx=2)
         
+        ttk.Button(btn_frame, text="刷新K线数据", command=self._refresh_kline_info).pack(side=tk.LEFT, padx=10)
+        
         list_frame = ttk.Frame(self)
         list_frame.pack(fill=tk.BOTH, expand=True)
         
-        columns = ('symbol', 'name', 'market')
-        self.tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=20)
+        self.tree = ttk.Treeview(list_frame, columns=self.COLUMNS, show='headings', height=20)
         
         self.tree.heading('symbol', text='代码')
         self.tree.heading('name', text='名称')
         self.tree.heading('market', text='市场')
+        self.tree.heading('latest_price', text='最新价')
+        self.tree.heading('change_pct', text='涨跌幅(%)')
+        self.tree.heading('data_count', text='K线数')
+        self.tree.heading('latest_date', text='最新日期')
         
-        self.tree.column('symbol', width=120, anchor='center')
-        self.tree.column('name', width=150, anchor='center')
-        self.tree.column('market', width=100, anchor='center')
+        self.tree.column('symbol', width=100, anchor='center')
+        self.tree.column('name', width=120, anchor='center')
+        self.tree.column('market', width=80, anchor='center')
+        self.tree.column('latest_price', width=90, anchor='center')
+        self.tree.column('change_pct', width=90, anchor='center')
+        self.tree.column('data_count', width=80, anchor='center')
+        self.tree.column('latest_date', width=110, anchor='center')
         
-        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar_y = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        scrollbar_x = ttk.Scrollbar(list_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
         
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
         
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
         self.tree.bind('<Double-1>', self._on_tree_double_click)
@@ -85,12 +99,52 @@ class StockListWidget(ttk.Frame):
             self.all_stocks_data.append({
                 'symbol': stock.get('symbol', ''),
                 'name': stock.get('name', ''),
-                'market': stock.get('market', '美股')
+                'market': stock.get('market', '美股'),
+                'latest_price': '-',
+                'change_pct': '-',
+                'data_count': '-',
+                'latest_date': '-'
             })
         
         self.current_page = 1
         self._update_page_display()
         self._update_page_buttons()
+    
+    def _refresh_kline_info(self):
+        self._load_kline_info_async()
+    
+    def _load_kline_info_async(self):
+        def load_thread():
+            for i, stock in enumerate(self.all_stocks_data):
+                try:
+                    symbol = stock.get('symbol', '')
+                    market = stock.get('market', 'A股')
+                    
+                    df = self.data_manager.kline.get_data(symbol, market, 'daily')
+                    
+                    if df is not None and not df.empty:
+                        latest_row = df.iloc[-1]
+                        prev_close = df.iloc[-2]['close'] if len(df) > 1 else latest_row['close']
+                        
+                        latest_price = latest_row['close']
+                        change_pct = ((latest_price - prev_close) / prev_close * 100) if prev_close > 0 else 0
+                        data_count = len(df)
+                        latest_date = str(latest_row['date']).split(' ')[0]
+                        
+                        self.all_stocks_data[i]['latest_price'] = f"{latest_price:.2f}"
+                        self.all_stocks_data[i]['change_pct'] = f"{change_pct:.2f}"
+                        self.all_stocks_data[i]['data_count'] = str(data_count)
+                        self.all_stocks_data[i]['latest_date'] = latest_date
+                        
+                        if i % 50 == 0:
+                            self.after(0, self._update_page_display)
+                except Exception as e:
+                    pass
+            
+            self.after(0, self._update_page_display)
+        
+        thread = threading.Thread(target=load_thread, daemon=True)
+        thread.start()
     
     def _update_page_display(self):
         for item in self.tree.get_children():
@@ -101,9 +155,22 @@ class StockListWidget(ttk.Frame):
         
         for i in range(start_idx, end_idx):
             data = self.all_stocks_data[i]
-            self.tree.insert('', tk.END, values=(
-                data['symbol'], data['name'], data['market']
-            ))
+            values = tuple(data.get(col, '-') for col in self.COLUMNS)
+            item_id = self.tree.insert('', tk.END, values=values)
+            
+            change_pct_str = data.get('change_pct', '-')
+            if change_pct_str != '-':
+                try:
+                    change_pct = float(change_pct_str)
+                    if change_pct > 0:
+                        self.tree.item(item_id, tags=('up',))
+                    elif change_pct < 0:
+                        self.tree.item(item_id, tags=('down',))
+                except:
+                    pass
+        
+        self.tree.tag_configure('up', foreground='red')
+        self.tree.tag_configure('down', foreground='green')
         
         total_pages = (self.total_stocks + self.page_size - 1) // self.page_size
         self.page_label.config(text=f"第 {self.current_page}/{total_pages} 页 (共 {self.total_stocks} 只股票)")
@@ -140,7 +207,11 @@ class StockListWidget(ttk.Frame):
                 filtered.append({
                     'symbol': stock.get('symbol'),
                     'name': stock.get('name'),
-                    'market': stock.get('market', '美股')
+                    'market': stock.get('market', '美股'),
+                    'latest_price': '-',
+                    'change_pct': '-',
+                    'data_count': '-',
+                    'latest_date': '-'
                 })
         
         self.all_stocks_data = filtered
@@ -148,6 +219,7 @@ class StockListWidget(ttk.Frame):
         self.current_page = 1
         self._update_page_display()
         self._update_page_buttons()
+        self._load_kline_info_async()
     
     def _reset_search(self):
         self.search_var.set('')

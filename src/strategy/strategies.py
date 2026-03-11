@@ -1,10 +1,18 @@
 import pandas as pd
 from typing import List, Dict, Any
 from datetime import datetime
-from .interfaces import BaseStrategy, Signal, SignalType, SignalStrength
+from .interfaces import BaseStrategy, Signal, SignalType, SignalStrength, StrategyRegistry
 from .indicators import MAIndicator, MACDIndicator, RSIIndicator
 
 
+@StrategyRegistry.register(
+    name='均线交叉',
+    description='短期均线上穿/下穿长期均线',
+    params={
+        'fast_period': {'label': '短期均线', 'default': 5, 'min': 3, 'max': 20, 'type': 'int'},
+        'slow_period': {'label': '长期均线', 'default': 20, 'min': 10, 'max': 60, 'type': 'int'},
+    }
+)
 class MACrossStrategy(BaseStrategy):
     """
     均线交叉策略
@@ -74,6 +82,15 @@ class MACrossStrategy(BaseStrategy):
         return signals
 
 
+@StrategyRegistry.register(
+    name='MACD策略',
+    description='MACD金叉/死叉信号',
+    params={
+        'fast_period': {'label': '快线周期', 'default': 12, 'min': 5, 'max': 20, 'type': 'int'},
+        'slow_period': {'label': '慢线周期', 'default': 26, 'min': 15, 'max': 40, 'type': 'int'},
+        'signal_period': {'label': '信号线周期', 'default': 9, 'min': 5, 'max': 15, 'type': 'int'},
+    }
+)
 class MACDStrategy(BaseStrategy):
     """
     MACD策略
@@ -143,6 +160,15 @@ class MACDStrategy(BaseStrategy):
         return signals
 
 
+@StrategyRegistry.register(
+    name='RSI策略',
+    description='RSI超卖/超买区域信号',
+    params={
+        'period': {'label': 'RSI周期', 'default': 14, 'min': 5, 'max': 30, 'type': 'int'},
+        'oversold': {'label': '超卖阈值', 'default': 30, 'min': 10, 'max': 40, 'type': 'float'},
+        'overbought': {'label': '超买阈值', 'default': 70, 'min': 60, 'max': 90, 'type': 'float'},
+    }
+)
 class RSIStrategy(BaseStrategy):
     """
     RSI策略
@@ -211,6 +237,15 @@ class RSIStrategy(BaseStrategy):
         return signals
 
 
+@StrategyRegistry.register(
+    name='高点突破',
+    description='价格突破过去一段时间的高点',
+    params={
+        'lookback_start': {'label': '回溯起始天数', 'default': 5, 'min': 1, 'max': 20, 'type': 'int'},
+        'lookback_end': {'label': '回溯结束天数', 'default': 50, 'min': 20, 'max': 100, 'type': 'int'},
+        'confirm_days': {'label': '确认天数', 'default': 4, 'min': 1, 'max': 10, 'type': 'int'},
+    }
+)
 class HighBreakoutStrategy(BaseStrategy):
     """
     高点突破策略
@@ -299,6 +334,14 @@ class HighBreakoutStrategy(BaseStrategy):
         return signals
 
 
+@StrategyRegistry.register(
+    name='组合策略',
+    description='结合多个策略的信号，通过投票机制决定最终信号',
+    params={
+        'min_votes': {'label': '最小投票数', 'default': 2, 'min': 1, 'max': 5, 'type': 'int'},
+    },
+    supports_scanner=False
+)
 class CompositeStrategy(BaseStrategy):
     """
     组合策略

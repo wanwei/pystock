@@ -92,6 +92,106 @@ class BaseIndicator(ABC):
         return all(col in kline_data.columns for col in required_columns)
 
 
+class StrategyRegistry:
+    """
+    策略注册器
+    
+    使用装饰器模式自动注册策略类，支持：
+    - 自动发现所有策略类
+    - 统一管理策略配置
+    - 动态获取策略列表
+    """
+    
+    _instance = None
+    _strategies: Dict[str, Dict[str, Any]] = {}
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    @classmethod
+    def register(cls, name: str, description: str = "", 
+                 params: Dict[str, Dict[str, Any]] = None,
+                 supports_scanner: bool = True,
+                 supports_backtest: bool = True):
+        """
+        策略注册装饰器
+        
+        Args:
+            name: 策略显示名称
+            description: 策略描述
+            params: 策略参数配置，格式为:
+                {
+                    'param_name': {
+                        'label': '参数标签',
+                        'default': 默认值,
+                        'min': 最小值,
+                        'max': 最大值,
+                        'type': 'int' | 'float'
+                    }
+                }
+            supports_scanner: 是否支持形态扫描
+            supports_backtest: 是否支持回测
+        """
+        def decorator(strategy_class):
+            strategy_key = strategy_class.__name__
+            cls._strategies[strategy_key] = {
+                'name': name,
+                'class': strategy_class,
+                'description': description,
+                'params': params or {},
+                'supports_scanner': supports_scanner,
+                'supports_backtest': supports_backtest
+            }
+            return strategy_class
+        return decorator
+    
+    @classmethod
+    def get_strategy(cls, strategy_key: str) -> Optional[Dict[str, Any]]:
+        """获取单个策略配置"""
+        return cls._strategies.get(strategy_key)
+    
+    @classmethod
+    def get_all_strategies(cls) -> Dict[str, Dict[str, Any]]:
+        """获取所有策略配置"""
+        return cls._strategies.copy()
+    
+    @classmethod
+    def get_scanner_strategies(cls) -> Dict[str, Dict[str, Any]]:
+        """获取支持形态扫描的策略"""
+        return {
+            k: v for k, v in cls._strategies.items() 
+            if v.get('supports_scanner', True)
+        }
+    
+    @classmethod
+    def get_backtest_strategies(cls) -> Dict[str, Dict[str, Any]]:
+        """获取支持回测的策略"""
+        return {
+            k: v for k, v in cls._strategies.items() 
+            if v.get('supports_backtest', True)
+        }
+    
+    @classmethod
+    def get_strategy_names(cls) -> List[str]:
+        """获取所有策略名称列表"""
+        return [v['name'] for v in cls._strategies.values()]
+    
+    @classmethod
+    def get_strategy_by_name(cls, display_name: str) -> Optional[Dict[str, Any]]:
+        """根据显示名称获取策略配置"""
+        for key, config in cls._strategies.items():
+            if config['name'] == display_name:
+                return {'key': key, **config}
+        return None
+    
+    @classmethod
+    def clear(cls):
+        """清空所有注册的策略（主要用于测试）"""
+        cls._strategies.clear()
+
+
 class BaseStrategy(ABC):
     """
     策略基类
