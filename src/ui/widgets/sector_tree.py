@@ -9,9 +9,11 @@ class SectorTreeWidget(ttk.Frame):
     
     以树形结构展示股票分类：
     - 根节点：分类类型（行业板块、概念板块）
-    - 子节点：具体板块
+    - 子节点：层级板块（支持多级嵌套）
+    - 叶子节点：可展开查看成分股
     
     支持功能：
+    - 多级层级展开
     - 展开/折叠
     - 搜索过滤
     - 选择回调
@@ -108,19 +110,39 @@ class SectorTreeWidget(ttk.Frame):
             ), open=False)
             self._tree_items[f"type_{sector_type}"] = type_item
             
-            for sector in sectors:
-                sector_code = sector.get('code', '')
-                sector_name = sector.get('name', '')
-                
-                stocks_info = self.sector_manager.get_sector_stocks_info(sector_type, sector_code)
-                stock_count = stocks_info.get('count', 0) if stocks_info else 0
-                
-                item_id = self.tree.insert(type_item, tk.END, text='', values=(
-                    sector_name, sector_code, stock_count
-                ), tags=(sector_type,))
-                self._tree_items[f"{sector_type}_{sector_code}"] = item_id
+            root_sectors = self.sector_manager.get_root_sectors(sector_type)
+            for sector in root_sectors:
+                self._add_sector_node(type_item, sector_type, sector)
         
         self._update_statistics()
+    
+    def _add_sector_node(self, parent_item, sector_type: str, sector: Dict):
+        """
+        递归添加板块节点
+        
+        Args:
+            parent_item: 父节点ID
+            sector_type: 板块类型
+            sector: 板块数据
+        """
+        sector_code = sector.get('code', '')
+        sector_name = sector.get('name', '')
+        
+        stocks_info = self.sector_manager.get_sector_stocks_info(sector_type, sector_code)
+        stock_count = stocks_info.get('count', 0) if stocks_info else 0
+        
+        children = self.sector_manager.get_child_sectors(sector_type, sector_code)
+        has_children = len(children) > 0
+        
+        node_text = '📁 ' + sector_name if has_children else '📄 ' + sector_name
+        
+        item_id = self.tree.insert(parent_item, tk.END, text=node_text, values=(
+            sector_name, sector_code, stock_count
+        ), tags=(sector_type,), open=False)
+        self._tree_items[f"{sector_type}_{sector_code}"] = item_id
+        
+        for child in children:
+            self._add_sector_node(item_id, sector_type, child)
     
     def _update_statistics(self):
         if not self.show_statistics:
@@ -172,7 +194,11 @@ class SectorTreeWidget(ttk.Frame):
                     stocks_info = self.sector_manager.get_sector_stocks_info(sector_type, sector_code)
                     stock_count = stocks_info.get('count', 0) if stocks_info else 0
                     
-                    item_id = self.tree.insert(type_item, tk.END, text='', values=(
+                    children = self.sector_manager.get_child_sectors(sector_type, sector_code)
+                    has_children = len(children) > 0
+                    node_text = '📁 ' + sector_name if has_children else '📄 ' + sector_name
+                    
+                    item_id = self.tree.insert(type_item, tk.END, text=node_text, values=(
                         sector_name, sector_code, stock_count
                     ), tags=(sector_type,))
                     self._tree_items[f"{sector_type}_{sector_code}"] = item_id
@@ -191,7 +217,12 @@ class SectorTreeWidget(ttk.Frame):
     
     def _collapse_all(self):
         for item in self.tree.get_children():
-            self.tree.item(item, open=False)
+            self._collapse_item_recursive(item)
+    
+    def _collapse_item_recursive(self, item):
+        self.tree.item(item, open=False)
+        for child in self.tree.get_children(item):
+            self._collapse_item_recursive(child)
     
     def _on_tree_select(self, event):
         if not self.on_select:
@@ -245,12 +276,15 @@ class SectorTreeWidget(ttk.Frame):
                     'count': len(self._sector_data.get(st, []))
                 }
         
+        has_children = self.sector_manager.has_children(sector_type, code) if sector_type and code else False
+        
         return {
             'is_sector': is_sector,
             'sector_type': sector_type,
             'name': name,
             'code': code,
-            'count': count
+            'count': count,
+            'has_children': has_children
         }
     
     def get_selected_sector(self) -> Optional[Dict[str, Any]]:
@@ -271,9 +305,51 @@ class SectorTreeWidget(ttk.Frame):
             if type_item:
                 self.tree.item(type_item, open=True)
             
+            self._expand_parent_nodes(sector_type, sector_code)
+            
             self.tree.selection_set(item_id)
             self.tree.see(item_id)
             self.tree.focus(item_id)
     
+    def _expand_parent_nodes(self, sector_type: str, sector_code: str):
+        """
+        展开父节点
+        """
+        sector = self.sector_manager.get_sector_by_code(sector_type, sector_code)
+        if sector:
+            parent_code = sector.get('parent_code')
+            if parent_code:
+                parent_item = self._tree_items.get(f"{sector_type}_{parent_code}")
+                if parent_item:
+                    self.tree.item(parent_item, open=True)
+                    self._expand_parent_nodes(sector_type, parent_code)
+    
     def get_sector_stocks(self, sector_type: str, sector_code: str) -> List[Dict]:
         return self.sector_manager.load_sector_stocks(sector_type, sector_code)
+    
+    def get_all_stocks_in_sector(self, sector_type: str, sector_code: str) -> List[Dict]:
+        """
+        获取板块及其所有子板块的成分股
+        
+        Args:
+            sector_type: 板块类型
+            sector_code: 板块代码
+        
+        Returns:
+            list: 成分股列表（去重）
+        """
+        all_stocks = {}
+        
+        def collect_stocks(s_code):
+            stocks = self.sector_manager.load_sector_stocks(sector_type, s_code)
+            for stock in stocks:
+                stock_code = stock.get('code')
+                if stock_code and stock_code not in all_stocks:
+                    all_stocks[stock_code] = stock
+            
+            children = self.sector_manager.get_child_sectors(sector_type, s_code)
+            for child in children:
+                collect_stocks(child.get('code'))
+        
+        collect_stocks(sector_code)
+        return list(all_stocks.values())

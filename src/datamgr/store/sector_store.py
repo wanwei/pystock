@@ -24,6 +24,9 @@ class SectorStore(BaseStore):
         'concept': '概念板块'
     }
     
+    SECTOR_COLUMNS = ['code', 'name', 'parent_code', 'parent_name', 'change_pct', 'change', 'price',
+                      'volume', 'amount', 'leading_stock', 'leading_code']
+    
     def __init__(self, base_dir):
         super().__init__(base_dir)
         self._ensure_subdirectories()
@@ -273,3 +276,76 @@ class SectorStore(BaseStore):
             }
         
         return stats
+    
+    def get_root_sectors(self, sector_type):
+        """
+        获取根节点板块（没有父分类的板块）
+        
+        Args:
+            sector_type: 板块类型
+        
+        Returns:
+            list: 根节点板块列表
+        """
+        sectors = self.load_sectors(sector_type)
+        return [s for s in sectors if not s.get('parent_code')]
+    
+    def get_child_sectors(self, sector_type, parent_code):
+        """
+        获取指定板块的子板块
+        
+        Args:
+            sector_type: 板块类型
+            parent_code: 父板块代码
+        
+        Returns:
+            list: 子板块列表
+        """
+        sectors = self.load_sectors(sector_type)
+        return [s for s in sectors if s.get('parent_code') == parent_code]
+    
+    def get_sector_by_code(self, sector_type, sector_code):
+        """
+        根据代码获取板块信息
+        
+        Args:
+            sector_type: 板块类型
+            sector_code: 板块代码
+        
+        Returns:
+            dict: 板块信息，未找到返回 None
+        """
+        sectors = self.load_sectors(sector_type)
+        for sector in sectors:
+            if sector.get('code') == sector_code:
+                return sector
+        return None
+    
+    def build_sector_tree(self, sector_type):
+        """
+        构建板块树形结构
+        
+        Args:
+            sector_type: 板块类型
+        
+        Returns:
+            list: 树形结构数据，每项包含 sector 和 children
+        """
+        sectors = self.load_sectors(sector_type)
+        sector_map = {s.get('code'): s for s in sectors}
+        
+        def build_node(sector):
+            node = {
+                'sector': sector,
+                'children': []
+            }
+            code = sector.get('code')
+            for s in sectors:
+                if s.get('parent_code') == code:
+                    node['children'].append(build_node(s))
+            return node
+        
+        root_sectors = [s for s in sectors if not s.get('parent_code')]
+        tree = [build_node(s) for s in root_sectors]
+        
+        return tree

@@ -23,8 +23,14 @@ class SectorDownloader:
     1. 下载行业板块列表及成分股
     2. 下载概念板块列表及成分股
     3. 自动保存到 SectorManager
+    4. 支持板块层级关系
     
     数据源: AkShare (东方财富)
+    
+    层级关系说明:
+    - 东方财富的行业板块数据本身是扁平的，没有直接的层级关系
+    - 可以通过配置文件或手动方式设置层级关系
+    - 层级关系通过 parent_code 字段表示
     """
     
     SECTOR_TYPES = {
@@ -32,12 +38,119 @@ class SectorDownloader:
         'concept': '概念板块'
     }
     
+    SECTOR_HIERARCHY_FILE = 'sector_hierarchy.json'
+    
     def __init__(self, data_dir='data'):
         self.manager = SectorManager(data_dir)
+        self.data_dir = data_dir
         self.akshare_available = AKSHARE_AVAILABLE
         
         if not self.akshare_available:
             print("警告: akshare 未安装，请先安装: pip install akshare")
+        
+        self._hierarchy_cache = None
+    
+    def _get_hierarchy_filepath(self):
+        return os.path.join(self.data_dir, 'sector', self.SECTOR_HIERARCHY_FILE)
+    
+    def load_hierarchy_config(self):
+        """
+        加载层级关系配置
+        
+        Returns:
+            dict: 层级关系配置 {sector_type: {sector_code: parent_code}}
+        """
+        if self._hierarchy_cache is not None:
+            return self._hierarchy_cache
+        
+        filepath = self._get_hierarchy_filepath()
+        if not os.path.exists(filepath):
+            self._hierarchy_cache = {}
+            return self._hierarchy_cache
+        
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                self._hierarchy_cache = json.load(f)
+            return self._hierarchy_cache
+        except Exception as e:
+            print(f"加载层级配置失败: {e}")
+            self._hierarchy_cache = {}
+            return self._hierarchy_cache
+    
+    def save_hierarchy_config(self, hierarchy):
+        """
+        保存层级关系配置
+        
+        Args:
+            hierarchy: 层级关系配置
+        
+        Returns:
+            bool: 是否成功
+        """
+        filepath = self._get_hierarchy_filepath()
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(hierarchy, f, ensure_ascii=False, indent=2)
+            self._hierarchy_cache = hierarchy
+            return True
+        except Exception as e:
+            print(f"保存层级配置失败: {e}")
+            return False
+    
+    def set_sector_parent(self, sector_type, sector_code, parent_code):
+        """
+        设置板块的父级关系
+        
+        Args:
+            sector_type: 板块类型
+            sector_code: 板块代码
+            parent_code: 父板块代码 (None表示根节点)
+        
+        Returns:
+            bool: 是否成功
+        """
+        hierarchy = self.load_hierarchy_config()
+        
+        if sector_type not in hierarchy:
+            hierarchy[sector_type] = {}
+        
+        if parent_code is None:
+            if sector_code in hierarchy[sector_type]:
+                del hierarchy[sector_type][sector_code]
+        else:
+            hierarchy[sector_type][sector_code] = parent_code
+        
+        return self.save_hierarchy_config(hierarchy)
+    
+    def _apply_hierarchy_to_sectors(self, sector_type, sectors):
+        """
+        应用层级关系到板块列表
+        
+        Args:
+            sector_type: 板块类型
+            sectors: 板块列表
+        
+        Returns:
+            list: 带有层级信息的板块列表
+        """
+        hierarchy = self.load_hierarchy_config()
+        sector_hierarchy = hierarchy.get(sector_type, {})
+        
+        sector_map = {s.get('code'): s for s in sectors}
+        
+        for sector in sectors:
+            code = sector.get('code')
+            parent_code = sector_hierarchy.get(code)
+            sector['parent_code'] = parent_code
+            
+            if parent_code and parent_code in sector_map:
+                sector['parent_name'] = sector_map[parent_code].get('name', '')
+            else:
+                sector['parent_name'] = ''
+        
+        return sectors
     
     def download_industry_sectors(self):
         """

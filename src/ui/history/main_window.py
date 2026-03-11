@@ -1,8 +1,9 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import threading
 import pandas as pd
 import os
+import json
 
 from datamgr import StockDataManager, KLineManager
 from datamgr.stock_filter import StockFilter
@@ -78,23 +79,94 @@ class HistoryAnalysisApp:
         self.main_frame = ttk.Frame(self.root)
         self.main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        self._show_stock_list_view()
-    
-    def _show_stock_list_view(self):
-        for widget in self.main_frame.winfo_children():
-            widget.destroy()
-        
-        self.root.title("股票历史分析系统 - 股票列表")
-        
         title_label = ttk.Label(self.main_frame, text="股票列表", font=('Microsoft YaHei', 16, 'bold'))
         title_label.pack(pady=(0, 10))
         
+        style = ttk.Style()
+        style.configure('Custom.TNotebook.Tab', font=('Microsoft YaHei', 12))
+        
+        self.notebook = ttk.Notebook(self.main_frame, style='Custom.TNotebook')
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+        
+        self.all_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.all_tab, text="  全部  ")
+        
+        self.favorite_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.favorite_tab, text="  自选  ")
+        
+        self._create_all_tab_content()
+        self._create_favorite_tab_content()
+    
+    def _create_all_tab_content(self):
         self.stock_list = StockListWidget(
-            self.main_frame,
+            self.all_tab,
             self.data_manager,
             on_double_click=self._on_stock_double_click
         )
         self.stock_list.pack(fill=tk.BOTH, expand=True)
+    
+    def _create_favorite_tab_content(self):
+        self.favorite_data_manager = StockDataManager()
+        
+        config_frame = ttk.Frame(self.favorite_tab)
+        config_frame.pack(fill=tk.X, pady=5)
+        
+        self.config_path_var = tk.StringVar()
+        config_dir = os.path.join(self.favorite_data_manager.base_dir, 'config')
+        self.config_path_var.set(config_dir)
+        
+        ttk.Label(config_frame, text="配置路径:").pack(side=tk.LEFT, padx=5)
+        self.config_path_entry = ttk.Entry(config_frame, textvariable=self.config_path_var, width=50)
+        self.config_path_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Button(config_frame, text="装载JSON", command=self._load_json_to_favorite).pack(side=tk.LEFT, padx=5)
+        
+        self.favorite_stock_list = StockListWidget(
+            self.favorite_tab,
+            self.favorite_data_manager,
+            on_double_click=self._on_stock_double_click,
+            stocks_source='config'
+        )
+        self.favorite_stock_list.pack(fill=tk.BOTH, expand=True)
+    
+    def _load_json_to_favorite(self):
+        config_dir = self.config_path_var.get()
+        if not os.path.exists(config_dir):
+            os.makedirs(config_dir, exist_ok=True)
+        
+        file_path = filedialog.askopenfilename(
+            parent=self.root,
+            initialdir=config_dir,
+            title="选择JSON文件",
+            filetypes=[("JSON文件", "*.json"), ("所有文件", "*.*")]
+        )
+        
+        if file_path:
+            def load_thread():
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    json_data = json.loads(content)
+                    stocks = json_data.get('stocks', [])
+                    
+                    if not stocks:
+                        self.root.after(0, lambda: messagebox.showwarning("提示", "JSON中没有股票数据", parent=self.root))
+                        return
+                    
+                    self.favorite_data_manager.config.store.clear_stocks()
+                    self.favorite_data_manager.config.add_stocks_batch(stocks)
+                    self.favorite_data_manager.config.cache.invalidate()
+                    
+                    self.root.after(0, self.favorite_stock_list.refresh)
+                    self.root.after(0, lambda: messagebox.showinfo("成功", f"已加载 {len(stocks)} 只股票", parent=self.root))
+                    
+                except json.JSONDecodeError as e:
+                    self.root.after(0, lambda: messagebox.showerror("JSON格式错误", f"JSON解析失败: {e}", parent=self.root))
+                except Exception as e:
+                    self.root.after(0, lambda: messagebox.showerror("错误", f"读取文件失败: {e}", parent=self.root))
+            
+            thread = threading.Thread(target=load_thread, daemon=True)
+            thread.start()
     
     def _on_stock_double_click(self, stock):
         self.current_symbol = stock['symbol']
@@ -126,7 +198,7 @@ class HistoryAnalysisApp:
         btn_frame = ttk.Frame(self.main_frame)
         btn_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Button(btn_frame, text="返回列表", command=self._show_stock_list_view).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="返回列表", command=self._return_to_list).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="刷新数据", command=self._refresh_kline).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="回测", command=self._open_backtest).pack(side=tk.LEFT, padx=5)
         
@@ -139,6 +211,25 @@ class HistoryAnalysisApp:
         self.kline_chart.bind_keys(self.root)
         
         self._load_kline_data()
+    
+    def _return_to_list(self):
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+        
+        title_label = ttk.Label(self.main_frame, text="股票列表", font=('Microsoft YaHei', 16, 'bold'))
+        title_label.pack(pady=(0, 10))
+        
+        self.notebook = ttk.Notebook(self.main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+        
+        self.all_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.all_tab, text="全部")
+        
+        self.favorite_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.favorite_tab, text="收藏")
+        
+        self._create_all_tab_content()
+        self._create_favorite_tab_content()
     
     def _on_stock_change(self, direction):
         stocks = self.data_manager.get_stock_list()

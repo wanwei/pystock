@@ -125,3 +125,30 @@ class ConfigManager:
         清空内存缓存
         """
         self.cache.clear()
+    
+    def clear_stocks(self):
+        """
+        清空股票列表
+        
+        Returns:
+            bool: 是否成功
+        """
+        success = self.store.clear_stocks()
+        if success:
+            self.cache.invalidate()
+        return success
+    
+    def add_stocks_batch(self, stocks_list):
+        """
+        批量添加股票到配置
+        
+        Args:
+            stocks_list: 股票列表，每项包含 symbol, name, market
+        
+        Returns:
+            int: 成功添加的数量
+        """
+        added_count = self.store.add_stocks_batch(stocks_list)
+        if added_count > 0:
+            self.cache.invalidate()
+        return added_count

@@ -16,12 +16,13 @@ class StockListWidget(ttk.Frame):
     
     COLUMNS = ('symbol', 'name', 'market', 'latest_price', 'change_pct', 'data_count', 'latest_date')
     
-    def __init__(self, parent, data_manager, on_select=None, on_double_click=None, **kwargs):
+    def __init__(self, parent, data_manager, on_select=None, on_double_click=None, stocks_source='list', **kwargs):
         super().__init__(parent, **kwargs)
         
         self.data_manager = data_manager
         self.on_select = on_select
         self.on_double_click = on_double_click
+        self.stocks_source = stocks_source
         
         self.current_page = 1
         self.page_size = 100
@@ -32,24 +33,29 @@ class StockListWidget(ttk.Frame):
         self._init_data()
     
     def _create_widgets(self):
+        style = ttk.Style()
+        style.configure('StockList.Treeview', font=('Microsoft YaHei', 11), rowheight=28)
+        style.configure('StockList.TButton', font=('Microsoft YaHei', 11))
+        style.configure('StockList.TLabel', font=('Microsoft YaHei', 11))
+        
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill=tk.X, pady=(0, 5))
         
-        ttk.Label(btn_frame, text="搜索:").pack(side=tk.LEFT, padx=(10, 2))
+        ttk.Label(btn_frame, text="搜索:", style='StockList.TLabel').pack(side=tk.LEFT, padx=(10, 2))
         self.search_var = tk.StringVar()
-        self.search_entry = ttk.Entry(btn_frame, textvariable=self.search_var, width=15)
+        self.search_entry = ttk.Entry(btn_frame, textvariable=self.search_var, width=15, font=('Microsoft YaHei', 11))
         self.search_entry.pack(side=tk.LEFT, padx=2)
         self.search_entry.bind('<Return>', self._on_search)
         
-        ttk.Button(btn_frame, text="搜索", command=self._on_search).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="重置", command=self._reset_search).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="搜索", command=self._on_search, style='StockList.TButton').pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="重置", command=self._reset_search, style='StockList.TButton').pack(side=tk.LEFT, padx=2)
         
-        ttk.Button(btn_frame, text="刷新K线数据", command=self._refresh_kline_info).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="刷新K线数据", command=self._refresh_kline_info, style='StockList.TButton').pack(side=tk.LEFT, padx=10)
         
         list_frame = ttk.Frame(self)
         list_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.tree = ttk.Treeview(list_frame, columns=self.COLUMNS, show='headings', height=20)
+        self.tree = ttk.Treeview(list_frame, columns=self.COLUMNS, show='headings', height=20, style='StockList.Treeview')
         
         self.tree.heading('symbol', text='代码')
         self.tree.heading('name', text='名称')
@@ -59,13 +65,13 @@ class StockListWidget(ttk.Frame):
         self.tree.heading('data_count', text='K线数')
         self.tree.heading('latest_date', text='最新日期')
         
-        self.tree.column('symbol', width=100, anchor='center')
-        self.tree.column('name', width=120, anchor='center')
-        self.tree.column('market', width=80, anchor='center')
-        self.tree.column('latest_price', width=90, anchor='center')
-        self.tree.column('change_pct', width=90, anchor='center')
-        self.tree.column('data_count', width=80, anchor='center')
-        self.tree.column('latest_date', width=110, anchor='center')
+        self.tree.column('symbol', width=110, anchor='center')
+        self.tree.column('name', width=130, anchor='center')
+        self.tree.column('market', width=90, anchor='center')
+        self.tree.column('latest_price', width=100, anchor='center')
+        self.tree.column('change_pct', width=100, anchor='center')
+        self.tree.column('data_count', width=90, anchor='center')
+        self.tree.column('latest_date', width=120, anchor='center')
         
         scrollbar_y = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         scrollbar_x = ttk.Scrollbar(list_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
@@ -81,17 +87,23 @@ class StockListWidget(ttk.Frame):
         page_frame = ttk.Frame(self)
         page_frame.pack(fill=tk.X, pady=5)
         
-        self.page_label = ttk.Label(page_frame, text="", font=('Microsoft YaHei', 10))
+        self.page_label = ttk.Label(page_frame, text="", font=('Microsoft YaHei', 11))
         self.page_label.pack(side=tk.LEFT, padx=10)
         
-        self.prev_btn = ttk.Button(page_frame, text="上一页", command=self.prev_page)
+        self.prev_btn = ttk.Button(page_frame, text="上一页", command=self.prev_page, style='StockList.TButton')
         self.prev_btn.pack(side=tk.LEFT, padx=5)
         
-        self.next_btn = ttk.Button(page_frame, text="下一页", command=self.next_page)
+        self.next_btn = ttk.Button(page_frame, text="下一页", command=self.next_page, style='StockList.TButton')
         self.next_btn.pack(side=tk.LEFT, padx=5)
     
+    def _get_stocks(self):
+        if self.stocks_source == 'config':
+            return self.data_manager.config.get_stock_list()
+        else:
+            return self.data_manager.get_stock_list()
+    
     def _init_data(self):
-        stocks = self.data_manager.get_stock_list()
+        stocks = self._get_stocks()
         self.total_stocks = len(stocks)
         self.all_stocks_data = []
         
@@ -200,7 +212,7 @@ class StockListWidget(ttk.Frame):
             return
         
         filtered = []
-        for stock in self.data_manager.get_stock_list():
+        for stock in self._get_stocks():
             symbol = stock.get('symbol', '').lower()
             name = stock.get('name', '').lower()
             if keyword in symbol or keyword in name:
@@ -223,6 +235,9 @@ class StockListWidget(ttk.Frame):
     
     def _reset_search(self):
         self.search_var.set('')
+        self._init_data()
+    
+    def refresh(self):
         self._init_data()
     
     def _on_tree_select(self, event):

@@ -28,7 +28,7 @@ class SectorManager:
         'concept': '概念板块'
     }
     
-    SECTOR_COLUMNS = ['code', 'name', 'change_pct', 'change', 'price', 
+    SECTOR_COLUMNS = ['code', 'name', 'parent_code', 'parent_name', 'change_pct', 'change', 'price', 
                       'volume', 'amount', 'leading_stock', 'leading_code']
     
     STOCK_COLUMNS = ['code', 'name', 'change_pct', 'change', 'price',
@@ -195,6 +195,78 @@ class SectorManager:
         获取统计数据
         """
         return self.store.get_statistics()
+    
+    def get_root_sectors(self, sector_type):
+        """
+        获取根节点板块（没有父分类的板块）
+        
+        Args:
+            sector_type: 板块类型
+        
+        Returns:
+            list: 根节点板块列表
+        """
+        if sector_type not in self.SECTOR_TYPES:
+            return []
+        return self.store.get_root_sectors(sector_type)
+    
+    def get_child_sectors(self, sector_type, parent_code):
+        """
+        获取指定板块的子板块
+        
+        Args:
+            sector_type: 板块类型
+            parent_code: 父板块代码
+        
+        Returns:
+            list: 子板块列表
+        """
+        if sector_type not in self.SECTOR_TYPES:
+            return []
+        return self.store.get_child_sectors(sector_type, parent_code)
+    
+    def get_sector_by_code(self, sector_type, sector_code):
+        """
+        根据代码获取板块信息
+        
+        Args:
+            sector_type: 板块类型
+            sector_code: 板块代码
+        
+        Returns:
+            dict: 板块信息
+        """
+        if sector_type not in self.SECTOR_TYPES:
+            return None
+        return self.store.get_sector_by_code(sector_type, sector_code)
+    
+    def build_sector_tree(self, sector_type):
+        """
+        构建板块树形结构
+        
+        Args:
+            sector_type: 板块类型
+        
+        Returns:
+            list: 树形结构数据
+        """
+        if sector_type not in self.SECTOR_TYPES:
+            return []
+        return self.store.build_sector_tree(sector_type)
+    
+    def has_children(self, sector_type, sector_code):
+        """
+        检查板块是否有子板块
+        
+        Args:
+            sector_type: 板块类型
+            sector_code: 板块代码
+        
+        Returns:
+            bool: 是否有子板块
+        """
+        children = self.get_child_sectors(sector_type, sector_code)
+        return len(children) > 0
 
 
 if __name__ == "__main__":
