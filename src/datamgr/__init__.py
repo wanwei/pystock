@@ -5,6 +5,7 @@ from .sector_manager import SectorManager
 from .config_manager import ConfigManager
 from .stock_list_manager import StockListManager
 from .stock_filter import StockFilter, FilterCondition
+from .index_builder import IndexBuilder
 
 from .store import (
     BaseStore,
@@ -33,6 +34,7 @@ __all__ = [
     'StockListManager',
     'StockFilter',
     'FilterCondition',
+    'IndexBuilder',
     'BaseStore',
     'KLineStore',
     'RealtimeStore',
