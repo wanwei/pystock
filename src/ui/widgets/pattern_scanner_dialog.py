@@ -17,6 +17,7 @@ from strategy.strategies import (
     RSIStrategy
 )
 from datamgr.stock_filter import StockFilter, FilterCondition
+from ui.widgets.kline_chart import KLineChartWidget
 
 
 class PatternScannerDialog(tk.Toplevel):
@@ -681,9 +682,53 @@ class PatternScannerDialog(tk.Toplevel):
         values = item['values']
         
         if len(values) >= 2:
-            symbol = values[0]
+            symbol = str(values[0])
             market = values[1]
-            messagebox.showinfo("提示", f"查看 {symbol} ({market}) K线详情功能待实现")
+            if market == 'A股':
+                symbol = symbol.zfill(6)
+            self._show_kline_dialog(symbol, market)
+    
+    def _show_kline_dialog(self, symbol: str, market: str):
+        if not self.kline_manager:
+            messagebox.showwarning("提示", "K线管理器未配置")
+            return
+        
+        kline_window = tk.Toplevel(self)
+        kline_window.title(f"{symbol} K线图")
+        kline_window.geometry("1000x600")
+        kline_window.minsize(800, 500)
+        
+        kline_chart = KLineChartWidget(kline_window)
+        kline_chart.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        def load_kline_data(period='daily'):
+            df = self.kline_manager.get_data(symbol, market, period)
+            if df is not None and not df.empty:
+                kline_data = df.to_dict('records')
+                kline_chart.set_data(kline_data, period)
+            else:
+                kline_chart.set_data(None)
+        
+        def on_period_change(new_period):
+            load_kline_data(new_period)
+        
+        kline_chart.on_period_change = on_period_change
+        
+        kline_chart.bind_keys(kline_window)
+        kline_window.protocol("WM_DELETE_WINDOW", lambda: self._close_kline_window(kline_window, kline_chart))
+        
+        load_kline_data('daily')
+        
+        kline_window.update_idletasks()
+        width = kline_window.winfo_width()
+        height = kline_window.winfo_height()
+        x = (kline_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (kline_window.winfo_screenheight() // 2) - (height // 2)
+        kline_window.geometry(f'{width}x{height}+{x}+{y}')
+    
+    def _close_kline_window(self, window, kline_chart):
+        kline_chart.unbind_keys(window)
+        window.destroy()
     
     def _on_close(self):
         if self.is_scanning:
