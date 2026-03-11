@@ -70,8 +70,16 @@ class BacktestConfigDialog(tk.Toplevel):
                               font=('Microsoft YaHei', 11), foreground='#0066cc')
         stock_info.pack(pady=(0, 20))
         
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(10, 0))
+        
+        ttk.Button(button_frame, text="开始回测", command=self._on_confirm,
+                  width=15).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="取消", command=self._on_cancel,
+                  width=10).pack(side=tk.RIGHT, padx=5)
+        
         notebook = ttk.Notebook(main_frame)
-        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
         strategy_frame = ttk.Frame(notebook, padding=10)
         notebook.add(strategy_frame, text="策略设置")
@@ -81,14 +89,6 @@ class BacktestConfigDialog(tk.Toplevel):
         
         self._create_strategy_tab(strategy_frame)
         self._create_basic_tab(basic_frame)
-        
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-        
-        ttk.Button(button_frame, text="开始回测", command=self._on_confirm,
-                  width=15).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(button_frame, text="取消", command=self._on_cancel,
-                  width=10).pack(side=tk.RIGHT, padx=5)
     
     def _create_strategy_tab(self, parent):
         ttk.Label(parent, text="选择策略:", font=('Microsoft YaHei', 10, 'bold')).pack(anchor='w', pady=(0, 10))

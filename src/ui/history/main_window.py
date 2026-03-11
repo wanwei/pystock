@@ -12,6 +12,7 @@ from ui.widgets.pattern_scanner_dialog import PatternScannerDialog
 from .backtest_config_dialog import BacktestConfigDialog
 from .backtest_result_window import BacktestResultWindow
 from strategy.backtest import SimpleBacktest, VectorizedBacktest
+from strategy.interfaces import StrategyRegistry
 from strategy.strategies import (
     MACrossStrategy, MACDStrategy, RSIStrategy, 
     HighBreakoutStrategy, CompositeStrategy
@@ -366,8 +367,9 @@ class HistoryAnalysisApp:
                 self.root.after(0, lambda: self._show_backtest_result(result, config))
                 
             except Exception as e:
+                error_msg = str(e)
                 self.root.after(0, lambda: progress_window.destroy())
-                self.root.after(0, lambda: messagebox.showerror("回测错误", str(e)))
+                self.root.after(0, lambda msg=error_msg: messagebox.showerror("回测错误", msg))
         
         thread = threading.Thread(target=run_backtest_thread, daemon=True)
         thread.start()
@@ -385,9 +387,11 @@ class HistoryAnalysisApp:
         strategy_name = config['strategy_name']
         strategy_params = config['strategy_params']
         
-        strategy_class = STRATEGY_CLASSES.get(strategy_name)
-        if not strategy_class:
+        strategy_config = StrategyRegistry.get_strategy_by_name(strategy_name)
+        if not strategy_config:
             raise ValueError(f"未知策略: {strategy_name}")
+        
+        strategy_class = strategy_config['class']
         
         if strategy_name == '组合策略':
             sub_strategies = [
