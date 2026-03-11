@@ -59,7 +59,7 @@ class StockDataManager:
         self.kline = KLineManager(os.path.join(base_dir, 'kline_data'))
         self.realtime = RealtimeManager(os.path.join(base_dir, 'realtime'))
         self.sector = SectorManager(base_dir)
-        self.config = ConfigManager(config_dir)
+        self.config = ConfigManager(config_dir=config_dir, config_path=config_path)
     
     def get_stock_list(self, market='A股'):
         """

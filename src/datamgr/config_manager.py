@@ -17,12 +17,22 @@ class ConfigManager:
     └── stocks_config.json
     """
     
-    def __init__(self, config_dir=None):
-        if config_dir is None:
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            config_dir = os.path.join(project_root, 'config')
+    def __init__(self, config_dir=None, config_path=None):
+        """
+        初始化配置管理器
         
-        self.store = ConfigStore(config_dir)
+        支持通过 config_path 指定具体的配置文件路径；若未指定，则使用给定的目录或默认目录下的 stocks_config.json。
+        """
+        if config_path:
+            config_dir = os.path.dirname(config_path)
+            config_filename = os.path.basename(config_path)
+        else:
+            if config_dir is None:
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                config_dir = os.path.join(project_root, 'config')
+            config_filename = 'stocks_config.json'
+        
+        self.store = ConfigStore(config_dir, config_filename=config_filename)
         self.cache = ConfigCache()
     
     def load_config(self):

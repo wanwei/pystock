@@ -106,13 +106,15 @@ class HistoryAnalysisApp:
         self.stock_list.pack(fill=tk.BOTH, expand=True)
     
     def _create_favorite_tab_content(self):
-        self.favorite_data_manager = StockDataManager()
+        # 使用 data/config 作为“自选”配置目录，保持与“配置路径”展示一致
+        favorite_config_path = os.path.join(StockDataManager().base_dir, 'config', 'stocks_config.json')
+        self.favorite_data_manager = StockDataManager(config_path=favorite_config_path)
         
         config_frame = ttk.Frame(self.favorite_tab)
         config_frame.pack(fill=tk.X, pady=5)
         
         self.config_path_var = tk.StringVar()
-        config_dir = os.path.join(self.favorite_data_manager.base_dir, 'config')
+        config_dir = os.path.dirname(favorite_config_path)
         self.config_path_var.set(config_dir)
         
         ttk.Label(config_frame, text="配置路径:").pack(side=tk.LEFT, padx=5)
@@ -149,16 +151,20 @@ class HistoryAnalysisApp:
                     json_data = json.loads(content)
                     stocks = json_data.get('stocks', [])
                     
-                    if not stocks:
+                    if not isinstance(stocks, list) or len(stocks) == 0:
                         self.root.after(0, lambda: messagebox.showwarning("提示", "JSON中没有股票数据", parent=self.root))
                         return
                     
-                    self.favorite_data_manager.config.store.clear_stocks()
-                    self.favorite_data_manager.config.add_stocks_batch(stocks)
-                    self.favorite_data_manager.config.cache.invalidate()
+                    def switch_config():
+                        # 切换“自选”到用户选择的配置文件
+                        self.favorite_data_manager = StockDataManager(config_path=file_path)
+                        self.favorite_stock_list.data_manager = self.favorite_data_manager
+                        self.favorite_stock_list.refresh()
+                        # 更新展示的配置路径
+                        self.config_path_var.set(os.path.dirname(file_path))
+                        messagebox.showinfo("成功", f"已切换到配置文件: {os.path.basename(file_path)}（{len(stocks)} 只股票）", parent=self.root)
                     
-                    self.root.after(0, self.favorite_stock_list.refresh)
-                    self.root.after(0, lambda: messagebox.showinfo("成功", f"已加载 {len(stocks)} 只股票", parent=self.root))
+                    self.root.after(0, switch_config)
                     
                 except json.JSONDecodeError as e:
                     self.root.after(0, lambda: messagebox.showerror("JSON格式错误", f"JSON解析失败: {e}", parent=self.root))
