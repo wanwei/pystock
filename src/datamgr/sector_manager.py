@@ -1,8 +1,6 @@
 import os
-import json
-import pandas as pd
-from datetime import datetime
-from threading import Lock
+from .store import SectorStore
+from .cache import SectorCache
 
 
 class SectorManager:
@@ -37,33 +35,9 @@ class SectorManager:
                      'volume', 'amount', 'turnover']
     
     def __init__(self, base_dir='data'):
-        self.base_dir = base_dir
-        self.sector_dir = os.path.join(base_dir, 'sector')
-        
-        self._cache = {}
-        self._lock = Lock()
-        
-        self._ensure_directories()
-    
-    def _ensure_directories(self):
-        dirs = [
-            self.sector_dir,
-            os.path.join(self.sector_dir, 'industry_stocks'),
-            os.path.join(self.sector_dir, 'concept_stocks')
-        ]
-        for d in dirs:
-            if not os.path.exists(d):
-                os.makedirs(d)
-    
-    def _get_sector_filepath(self, sector_type):
-        return os.path.join(self.sector_dir, f'{sector_type}.json')
-    
-    def _get_stocks_dirpath(self, sector_type):
-        return os.path.join(self.sector_dir, f'{sector_type}_stocks')
-    
-    def _get_stocks_filepath(self, sector_type, sector_code):
-        dirpath = self._get_stocks_dirpath(sector_type)
-        return os.path.join(dirpath, f'{sector_code}.json')
+        sector_dir = os.path.join(base_dir, 'sector')
+        self.store = SectorStore(sector_dir)
+        self.cache = SectorCache()
     
     def save_sectors(self, sector_type, sectors):
         """
@@ -80,27 +54,12 @@ class SectorManager:
             print(f"不支持的板块类型: {sector_type}")
             return False
         
-        with self._lock:
-            try:
-                data = {
-                    'type': sector_type,
-                    'type_name': self.SECTOR_TYPES[sector_type],
-                    'count': len(sectors),
-                    'update_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'sectors': sectors
-                }
-                
-                filepath = self._get_sector_filepath(sector_type)
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                
-                self._cache[sector_type] = data
-                print(f"已保存 {len(sectors)} 个{self.SECTOR_TYPES[sector_type]}")
-                return True
-                
-            except Exception as e:
-                print(f"保存板块数据失败: {e}")
-                return False
+        success = self.store.save_sectors(sector_type, sectors)
+        if success:
+            self.cache.delete_sectors(sector_type)
+            print(f"已保存 {len(sectors)} 个{self.SECTOR_TYPES[sector_type]}")
+        
+        return success
     
     def load_sectors(self, sector_type):
         """
@@ -116,21 +75,14 @@ class SectorManager:
             print(f"不支持的板块类型: {sector_type}")
             return []
         
-        if sector_type in self._cache:
-            return self._cache[sector_type].get('sectors', [])
+        cached = self.cache.get_sectors(sector_type)
+        if cached is not None:
+            return cached
         
-        filepath = self._get_sector_filepath(sector_type)
-        if not os.path.exists(filepath):
-            return []
-        
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            self._cache[sector_type] = data
-            return data.get('sectors', [])
-        except Exception as e:
-            print(f"加载板块数据失败: {e}")
-            return []
+        sectors = self.store.load_sectors(sector_type)
+        if sectors:
+            self.cache.set_sectors(sector_type, sectors)
+        return sectors
     
     def get_sector_info(self, sector_type):
         """
@@ -145,31 +97,7 @@ class SectorManager:
         if sector_type not in self.SECTOR_TYPES:
             return None
         
-        if sector_type in self._cache:
-            data = self._cache[sector_type]
-            return {
-                'type': sector_type,
-                'type_name': data.get('type_name', ''),
-                'count': data.get('count', 0),
-                'update_time': data.get('update_time', '')
-            }
-        
-        filepath = self._get_sector_filepath(sector_type)
-        if not os.path.exists(filepath):
-            return None
-        
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            self._cache[sector_type] = data
-            return {
-                'type': sector_type,
-                'type_name': data.get('type_name', ''),
-                'count': data.get('count', 0),
-                'update_time': data.get('update_time', '')
-            }
-        except:
-            return None
+        return self.store.get_sector_info(sector_type)
     
     def save_sector_stocks(self, sector_type, sector_code, sector_name, stocks):
         """
@@ -188,28 +116,11 @@ class SectorManager:
             print(f"不支持的板块类型: {sector_type}")
             return False
         
-        with self._lock:
-            try:
-                data = {
-                    'sector_type': sector_type,
-                    'sector_code': sector_code,
-                    'sector_name': sector_name,
-                    'count': len(stocks),
-                    'update_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'stocks': stocks
-                }
-                
-                filepath = self._get_stocks_filepath(sector_type, sector_code)
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                
-                cache_key = f"{sector_type}_{sector_code}"
-                self._cache[cache_key] = data
-                return True
-                
-            except Exception as e:
-                print(f"保存成分股数据失败 {sector_name}: {e}")
-                return False
+        success = self.store.save_sector_stocks(sector_type, sector_code, sector_name, stocks)
+        if success:
+            self.cache.delete_stocks(sector_type, sector_code)
+        
+        return success
     
     def load_sector_stocks(self, sector_type, sector_code):
         """
@@ -222,53 +133,20 @@ class SectorManager:
         Returns:
             list: 成分股列表
         """
-        cache_key = f"{sector_type}_{sector_code}"
-        if cache_key in self._cache:
-            return self._cache[cache_key].get('stocks', [])
+        cached = self.cache.get_stocks(sector_type, sector_code)
+        if cached is not None:
+            return cached
         
-        filepath = self._get_stocks_filepath(sector_type, sector_code)
-        if not os.path.exists(filepath):
-            return []
-        
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            self._cache[cache_key] = data
-            return data.get('stocks', [])
-        except Exception as e:
-            print(f"加载成分股数据失败: {e}")
-            return []
+        stocks = self.store.load_sector_stocks(sector_type, sector_code)
+        if stocks:
+            self.cache.set_stocks(sector_type, sector_code, stocks)
+        return stocks
     
     def get_sector_stocks_info(self, sector_type, sector_code):
         """
         获取板块成分股概览信息
         """
-        cache_key = f"{sector_type}_{sector_code}"
-        if cache_key in self._cache:
-            data = self._cache[cache_key]
-            return {
-                'sector_code': sector_code,
-                'sector_name': data.get('sector_name', ''),
-                'count': data.get('count', 0),
-                'update_time': data.get('update_time', '')
-            }
-        
-        filepath = self._get_stocks_filepath(sector_type, sector_code)
-        if not os.path.exists(filepath):
-            return None
-        
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            self._cache[cache_key] = data
-            return {
-                'sector_code': sector_code,
-                'sector_name': data.get('sector_name', ''),
-                'count': data.get('count', 0),
-                'update_time': data.get('update_time', '')
-            }
-        except:
-            return None
+        return self.store.get_sector_stocks_info(sector_type, sector_code)
     
     def get_stock_sectors(self, stock_code):
         """
@@ -278,7 +156,7 @@ class SectorManager:
             stock_code: 股票代码
         
         Returns:
-            dict: {'industry': [...], 'concept': [...], 'region': [...]}
+            dict: {'industry': [...], 'concept': [...]}
         """
         result = {t: [] for t in self.SECTOR_TYPES}
         
@@ -310,30 +188,13 @@ class SectorManager:
     
     def clear_cache(self):
         """清空内存缓存"""
-        with self._lock:
-            self._cache.clear()
+        self.cache.clear()
     
     def get_statistics(self):
         """
         获取统计数据
         """
-        stats = {}
-        for sector_type, type_name in self.SECTOR_TYPES.items():
-            sector_info = self.get_sector_info(sector_type)
-            stocks_dir = self._get_stocks_dirpath(sector_type)
-            
-            stock_files = 0
-            if os.path.exists(stocks_dir):
-                stock_files = len([f for f in os.listdir(stocks_dir) if f.endswith('.json')])
-            
-            stats[sector_type] = {
-                'type_name': type_name,
-                'sector_count': sector_info['count'] if sector_info else 0,
-                'update_time': sector_info['update_time'] if sector_info else '',
-                'stocks_files': stock_files
-            }
-        
-        return stats
+        return self.store.get_statistics()
 
 
 if __name__ == "__main__":

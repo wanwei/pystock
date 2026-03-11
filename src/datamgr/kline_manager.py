@@ -1,11 +1,11 @@
 import os
-import json
-import pandas as pd
-from datetime import datetime, timedelta
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from config import STOCKS_CONFIG_PATH
 from downloaders.eastmoney_downloader import EastMoneyDownloader
+from .store import KLineStore, ConfigStore
+from .cache import KLineCache, ConfigCache
 
 
 class KLineManager:
@@ -42,78 +42,25 @@ class KLineManager:
         if data_dir is None:
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             data_dir = os.path.join(project_root, 'data', 'kline_data')
-        self.data_dir = data_dir
-        self.config_path = STOCKS_CONFIG_PATH
+            config_dir = os.path.join(project_root, 'config')
+        else:
+            config_dir = os.path.dirname(data_dir)
+        
+        self.store = KLineStore(data_dir)
+        self.config_store = ConfigStore(config_dir)
+        self.kline_cache = KLineCache()
+        self.config_cache = ConfigCache()
         self.downloader = EastMoneyDownloader()
         self.stock_list = []
-        self.kline_data = {}
         
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir)
-    
     def load_stock_list(self):
-        if not os.path.exists(self.config_path):
-            print(f"配置文件不存在: {self.config_path}")
-            return []
-        
-        try:
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            
-            self.stock_list = config.get('stocks', [])
-            print(f"已加载 {len(self.stock_list)} 只股票")
-            return self.stock_list
-            
-        except Exception as e:
-            print(f"加载配置文件失败: {e}")
-            return []
-    
-    def _get_stock_dir(self, symbol, market):
-        market_code = 'US' if market == '美股' else 'CN'
-        stock_dir = os.path.join(self.data_dir, f"{market_code}_{symbol}")
-        return stock_dir
-    
-    def _get_data_filepath(self, symbol, market, period):
-        stock_dir = self._get_stock_dir(symbol, market)
-        filename = f"{period}.csv"
-        return os.path.join(stock_dir, filename)
-    
-    def _ensure_stock_dir(self, symbol, market):
-        stock_dir = self._get_stock_dir(symbol, market)
-        if not os.path.exists(stock_dir):
-            os.makedirs(stock_dir)
-        return stock_dir
+        config = self.config_store.load()
+        self.stock_list = config.get('stocks', [])
+        print(f"已加载 {len(self.stock_list)} 只股票")
+        return self.stock_list
     
     def check_local_data(self, symbol, market, period):
-        filepath = self._get_data_filepath(symbol, market, period)
-        
-        if not os.path.exists(filepath):
-            return {
-                'exists': False,
-                'count': 0,
-                'latest_date': None,
-                'filepath': None
-            }
-        
-        try:
-            df = pd.read_csv(filepath)
-            count = len(df)
-            latest_date = df['date'].max() if 'date' in df.columns else None
-            
-            return {
-                'exists': True,
-                'count': count,
-                'latest_date': latest_date,
-                'filepath': filepath
-            }
-        except Exception as e:
-            print(f"读取文件失败 {filepath}: {e}")
-            return {
-                'exists': False,
-                'count': 0,
-                'latest_date': None,
-                'filepath': None
-            }
+        return self.store.get_data_info(symbol, market, period)
     
     def is_data_sufficient(self, symbol, market, period, min_records=None):
         local_info = self.check_local_data(symbol, market, period)
@@ -128,6 +75,7 @@ class KLineManager:
             return False, local_info
         
         if local_info['latest_date']:
+            from datetime import datetime
             try:
                 latest_str = str(local_info['latest_date'])
                 if ' ' in latest_str:
@@ -146,20 +94,14 @@ class KLineManager:
         return True, local_info
     
     def load_kline_data(self, symbol, market, period):
-        filepath = self._get_data_filepath(symbol, market, period)
+        cached = self.kline_cache.get_kline(symbol, market, period)
+        if cached is not None:
+            return cached
         
-        if not os.path.exists(filepath):
-            return None
-        
-        try:
-            df = pd.read_csv(filepath)
-            if 'date' in df.columns:
-                df['date'] = pd.to_datetime(df['date'])
-                df = df.sort_values('date')
-            return df
-        except Exception as e:
-            print(f"加载数据失败 {filepath}: {e}")
-            return None
+        df = self.store.load(symbol, market, period)
+        if df is not None and not df.empty:
+            self.kline_cache.set_kline(symbol, market, period, df)
+        return df
     
     def download_kline_data(self, symbol, market, period):
         period_name = self.PERIODS.get(period, {}).get('name', period)
@@ -170,7 +112,8 @@ class KLineManager:
         if market == 'A股':
             data = self.downloader.download_kline(symbol, period=period, days=days)
             if data is not None:
-                self._save_kline_data(symbol, 'CN', period, data)
+                self.store.save(symbol, 'CN', period, data)
+                self.kline_cache.delete_kline(symbol, market, period)
                 return True
         else:
             print(f"暂不支持 {market} 市场的数据下载")
@@ -178,29 +121,9 @@ class KLineManager:
         
         return False
     
-    def _save_kline_data(self, symbol, market, period, data):
-        if not data:
-            return
-        
-        stock_dir = self._ensure_stock_dir(symbol, '美股' if market == 'US' else 'A股')
-        filename = f"{period}.csv"
-        filepath = os.path.join(stock_dir, filename)
-        
-        df = pd.DataFrame(data)
-        df.to_csv(filepath, index=False, encoding='utf-8')
-        print(f"数据已保存: {filepath}")
-    
     def _parse_latest_date(self, latest_date_str, period):
-        """
-        解析最新日期字符串，区分日线和分钟线格式
+        from datetime import datetime
         
-        Args:
-            latest_date_str: 日期字符串
-            period: 周期
-            
-        Returns:
-            datetime: 解析后的日期时间对象
-        """
         if not latest_date_str:
             return None
         
@@ -232,16 +155,8 @@ class KLineManager:
             return None
     
     def _calc_start_date(self, latest_date, period):
-        """
-        计算增量下载的起始日期
+        from datetime import timedelta
         
-        Args:
-            latest_date: 本地最新日期 (datetime)
-            period: 周期
-            
-        Returns:
-            str: 起始日期字符串 (格式: '20240115')
-        """
         if latest_date is None:
             return None
         
@@ -253,28 +168,8 @@ class KLineManager:
         return start_date.strftime('%Y%m%d')
     
     def _need_update(self, latest_date, period, filepath=None):
-        """
-        判断是否需要更新数据
+        from datetime import datetime, timedelta
         
-        核心判断逻辑：
-        1. 如果本地数据的最后交易日就是当前交易日（今天）
-        2. 且数据文件的最后修改时间已超过当日15:30
-        3. 则说明今天收盘后的数据已经下载完成，无需再次更新
-        
-        原理说明：
-        - A股交易日收盘时间为15:00
-        - 数据源通常在收盘后30分钟内（约15:30）完成数据整理
-        - 如果文件在15:30之后被修改过，且数据日期是今天，说明数据已完整
-        - 此判断可避免重复下载已完成的数据，节省API调用次数
-        
-        Args:
-            latest_date: 本地最新日期 (datetime)
-            period: 周期
-            filepath: 数据文件路径，用于检查文件修改时间
-            
-        Returns:
-            bool: 是否需要更新
-        """
         if latest_date is None:
             return True
         
@@ -312,23 +207,13 @@ class KLineManager:
         return True
     
     def _merge_and_save(self, symbol, market, period, new_data):
-        """
-        合并新旧数据并保存
+        import pandas as pd
         
-        Args:
-            symbol: 股票代码
-            market: 市场
-            period: 周期
-            new_data: 新下载的数据列表
-            
-        Returns:
-            bool: 是否成功
-        """
         if not new_data:
             print(f"{symbol} {period} 无新数据需要合并")
             return False
         
-        filepath = self._get_data_filepath(symbol, market, period)
+        filepath = self.store.get_filepath(symbol, market, period)
         
         try:
             old_df = None
@@ -347,8 +232,8 @@ class KLineManager:
                 combined_df['date'] = combined_df['date'].astype(str)
                 combined_df = combined_df.sort_values('date')
             
-            stock_dir = self._ensure_stock_dir(symbol, market)
-            combined_df.to_csv(filepath, index=False, encoding='utf-8')
+            self.store.save(symbol, market, period, combined_df)
+            self.kline_cache.delete_kline(symbol, market, period)
             
             print(f"{symbol} {period} 增量更新完成: 新增 {len(new_data)} 条，合并后共 {len(combined_df)} 条")
             return True
@@ -358,17 +243,6 @@ class KLineManager:
             return False
     
     def update_kline_data(self, symbol, market, period):
-        """
-        增量更新K线数据
-        
-        Args:
-            symbol: 股票代码
-            market: 市场
-            period: 周期
-            
-        Returns:
-            bool: 是否成功
-        """
         period_name = self.PERIODS.get(period, {}).get('name', period)
         
         if market != 'A股':
@@ -393,6 +267,7 @@ class KLineManager:
             return True
         
         start_date = self._calc_start_date(latest_date, period)
+        from datetime import datetime
         end_date = datetime.now().strftime('%Y%m%d')
         
         print(f"{symbol} {period_name} 增量更新: {start_date} -> {end_date}")
@@ -411,15 +286,6 @@ class KLineManager:
         return self._merge_and_save(symbol, market, period, new_data)
     
     def sync_all_stocks_incremental(self, periods=None):
-        """
-        增量同步所有股票数据
-        
-        Args:
-            periods: 要同步的周期列表，None表示全部周期
-            
-        Returns:
-            dict: 同步结果
-        """
         if not self.stock_list:
             self.load_stock_list()
         
@@ -464,10 +330,6 @@ class KLineManager:
                         all_skipped = False
                     else:
                         success = self.update_kline_data(symbol, market, period)
-                        if success:
-                            local_info_after = self.check_local_data(symbol, market, period)
-                            if local_info['latest_date'] == local_info_after['latest_date']:
-                                pass
                     
                     stock_result['periods'][period] = success
                     
@@ -586,17 +448,7 @@ class KLineManager:
         return results
     
     def get_kline_data(self, symbol, market, period):
-        key = f"{symbol}_{market}_{period}"
-        
-        if key in self.kline_data:
-            return self.kline_data[key]
-        
-        df = self.load_kline_data(symbol, market, period)
-        
-        if df is not None:
-            self.kline_data[key] = df
-        
-        return df
+        return self.load_kline_data(symbol, market, period)
     
     def get_all_kline_data(self, symbol, market):
         result = {}
@@ -635,13 +487,8 @@ class KLineManager:
         print("Status: OK=sufficient, ~=insufficient, X=none")
     
     def list_stock_directories(self):
-        if not os.path.exists(self.data_dir):
-            return []
-        
-        stock_dirs = []
-        for item in os.listdir(self.data_dir):
-            item_path = os.path.join(self.data_dir, item)
-            if os.path.isdir(item_path):
-                stock_dirs.append(item)
-        
-        return sorted(stock_dirs)
+        return self.store.list_stocks()
+    
+    def clear_cache(self):
+        self.kline_cache.clear()
+        self.config_cache.clear()
