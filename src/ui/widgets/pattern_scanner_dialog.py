@@ -650,7 +650,7 @@ class PatternScannerDialog(tk.Toplevel):
             })
         
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(export_data, f, ensure_ascii=False, indent=2)
+            json.dump({'stocks': export_data}, f, ensure_ascii=False, indent=2)
         
         messagebox.showinfo("成功", f"结果已导出到:\n{filepath}")
     
