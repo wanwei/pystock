@@ -2,6 +2,8 @@ import os
 import json
 import pandas as pd
 from datetime import datetime, timedelta
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import STOCKS_CONFIG_PATH
 from downloaders.eastmoney_downloader import EastMoneyDownloader
 
@@ -38,7 +40,7 @@ class KLineManager:
     
     def __init__(self, data_dir=None):
         if data_dir is None:
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             data_dir = os.path.join(project_root, 'data', 'kline_data')
         self.data_dir = data_dir
         self.config_path = STOCKS_CONFIG_PATH
@@ -643,118 +645,3 @@ class KLineManager:
                 stock_dirs.append(item)
         
         return sorted(stock_dirs)
-
-
-if __name__ == "__main__":
-    manager = KLineManager()
-    
-    print("="*60)
-    print("K线数据管理器")
-    print("数据源: 东方财富API")
-    print("="*60)
-    
-    while True:
-        print("\n请选择操作:")
-        print("1. 查看数据状态")
-        print("2. 增量同步所有股票数据 (推荐)")
-        print("3. 全量同步所有股票数据")
-        print("4. 下载/更新单只股票数据")
-        print("5. 强制重新下载所有数据")
-        print("6. 查看本地股票目录")
-        print("7. 退出")
-        
-        choice = input("\n请输入选项 (1-7): ").strip()
-        
-        if choice == '1':
-            manager.show_data_status()
-        
-        elif choice == '2':
-            print("\n选择要同步的周期:")
-            print("1. 全部周期 (1分、5分、15分、1小时、日线)")
-            print("2. 仅日线")
-            print("3. 日线 + 1小时")
-            print("4. 自定义")
-            
-            sub_choice = input("请选择 (1-4): ").strip()
-            
-            if sub_choice == '1':
-                periods = None
-            elif sub_choice == '2':
-                periods = ['daily']
-            elif sub_choice == '3':
-                periods = ['daily', '1hour']
-            elif sub_choice == '4':
-                custom = input("输入周期 (用逗号分隔，如: daily,1hour,15min): ").strip()
-                periods = [p.strip() for p in custom.split(',')]
-            else:
-                periods = None
-            
-            manager.sync_all_stocks_incremental(periods=periods)
-        
-        elif choice == '3':
-            print("\n选择要同步的周期:")
-            print("1. 全部周期 (1分、5分、15分、1小时、日线)")
-            print("2. 仅日线")
-            print("3. 日线 + 1小时")
-            print("4. 自定义")
-            
-            sub_choice = input("请选择 (1-4): ").strip()
-            
-            if sub_choice == '1':
-                periods = None
-            elif sub_choice == '2':
-                periods = ['daily']
-            elif sub_choice == '3':
-                periods = ['daily', '1hour']
-            elif sub_choice == '4':
-                custom = input("输入周期 (用逗号分隔，如: daily,1hour,15min): ").strip()
-                periods = [p.strip() for p in custom.split(',')]
-            else:
-                periods = None
-            
-            manager.sync_all_stocks(periods=periods)
-        
-        elif choice == '4':
-            manager.load_stock_list()
-            symbol = input("请输入股票代码: ").strip()
-            market = input("请输入市场 (美股/A股): ").strip() or 'A股'
-            
-            print("\n更新模式:")
-            print("1. 增量更新 (推荐)")
-            print("2. 全量下载")
-            update_mode = input("请选择 (1-2，默认1): ").strip() or '1'
-            
-            print("\n可选周期: 1min, 5min, 15min, 1hour, daily")
-            custom = input("输入周期 (用逗号分隔，默认全部): ").strip()
-            if custom:
-                periods = [p.strip() for p in custom.split(',')]
-            else:
-                periods = None
-            
-            if update_mode == '2':
-                for period in (periods or list(manager.PERIODS.keys())):
-                    manager.download_kline_data(symbol, market, period)
-            else:
-                for period in (periods or list(manager.PERIODS.keys())):
-                    manager.update_kline_data(symbol, market, period)
-        
-        elif choice == '5':
-            confirm = input("确定要强制重新下载所有数据吗? (y/n): ").strip().lower()
-            if confirm == 'y':
-                manager.sync_all_stocks(force_download=True)
-        
-        elif choice == '6':
-            stock_dirs = manager.list_stock_directories()
-            if stock_dirs:
-                print(f"\n本地股票数据目录 ({len(stock_dirs)} 个):")
-                for d in stock_dirs:
-                    print(f"  - {d}")
-            else:
-                print("\n暂无本地数据目录")
-        
-        elif choice == '7':
-            print("再见！")
-            break
-        
-        else:
-            print("无效选项")

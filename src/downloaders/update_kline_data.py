@@ -4,7 +4,7 @@ import argparse
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from kline_manager import KLineManager
+from datamgr.kline_manager import KLineManager
 
 STOCK_LIST_PATH = 'data/cn_stock_list.csv'
 

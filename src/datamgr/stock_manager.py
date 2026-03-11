@@ -52,7 +52,7 @@ class StockDataManager:
         if config_path:
             self.config_path = config_path
         else:
-            self.config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'stocks_config.json')
+            self.config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'config', 'stocks_config.json')
         
         self._realtime_cache = {}
         self._kline_cache = {}
@@ -254,7 +254,7 @@ class StockDataManager:
                     new_df = pd.DataFrame([data])
                 
                 cache_key = f"{self._get_stock_key(symbol, market)}_{period}"
-                filepath = self._get_kline_filepath(symbol, market)
+                filepath = self._get_kline_filepath(symbol, market, period)
                 
                 if cache_key in self._kline_cache:
                     df = self._kline_cache[cache_key]
@@ -494,39 +494,3 @@ class StockDataManager:
         """
         config = self.load_stocks_config()
         return config.get('refresh_interval', 5)
-
-
-if __name__ == "__main__":
-    manager = StockDataManager()
-    
-    print("=" * 60)
-    print("股票数据管理器测试")
-    print("=" * 60)
-    
-    print("\n1. 测试即时数据追加...")
-    test_data = {
-        'name': '贵州茅台',
-        'price': 1850.00,
-        'open': 1840.00,
-        'high': 1860.00,
-        'low': 1835.00,
-        'prev_close': 1845.00,
-        'change': 5.00,
-        'change_pct': 0.27,
-        'volume': 1234567,
-        'amount': 2280000000
-    }
-    
-    manager.append_realtime_data('600519', 'A股', test_data)
-    
-    print("\n2. 读取即时数据...")
-    df = manager.get_realtime_data('600519', 'A股')
-    print(df)
-    
-    print("\n3. 股票数据概览...")
-    info = manager.get_stock_info('600519', 'A股')
-    print(info)
-    
-    print("\n4. 已有数据的股票列表...")
-    stocks = manager.list_stocks()
-    print(stocks)
