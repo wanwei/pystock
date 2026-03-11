@@ -6,6 +6,7 @@ from .config_manager import ConfigManager
 from .stock_list_manager import StockListManager
 from .stock_filter import StockFilter, FilterCondition
 from .index_builder import IndexBuilder
+from .board_category_manager import BoardCategoryManager
 
 from .store import (
     BaseStore,
@@ -13,7 +14,8 @@ from .store import (
     RealtimeStore,
     SectorStore,
     ConfigStore,
-    StockListStore
+    StockListStore,
+    BoardCategoryStore
 )
 
 from .cache import (
@@ -22,7 +24,8 @@ from .cache import (
     RealtimeCache,
     SectorCache,
     ConfigCache,
-    StockListCache
+    StockListCache,
+    BoardCategoryCache
 )
 
 __all__ = [
@@ -35,16 +38,19 @@ __all__ = [
     'StockFilter',
     'FilterCondition',
     'IndexBuilder',
+    'BoardCategoryManager',
     'BaseStore',
     'KLineStore',
     'RealtimeStore',
     'SectorStore',
     'ConfigStore',
     'StockListStore',
+    'BoardCategoryStore',
     'BaseCache',
     'KLineCache',
     'RealtimeCache',
     'SectorCache',
     'ConfigCache',
-    'StockListCache'
+    'StockListCache',
+    'BoardCategoryCache'
 ]
