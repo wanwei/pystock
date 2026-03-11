@@ -1,6 +1,7 @@
 from .stock_manager import StockDataManager
 from .kline_manager import KLineManager
 from .sector_manager import SectorManager
+from .stock_filter import StockFilter, FilterCondition
 
 from .store import (
     BaseStore,
@@ -22,6 +23,8 @@ __all__ = [
     'StockDataManager',
     'KLineManager',
     'SectorManager',
+    'StockFilter',
+    'FilterCondition',
     'BaseStore',
     'KLineStore',
     'RealtimeStore',

@@ -1,56 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import finnhub
-import requests
 import threading
-from datetime import datetime
 
-from config import FINNHUB_API_KEY
 from datamgr import StockDataManager, KLineManager
 from ui.widgets import StockListWidget, KLineChartWidget
-
-
-class EastMoneyAPI:
-    def __init__(self):
-        self.base_url = "http://push2.eastmoney.com/api/qt/stock/get"
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-    
-    def _get_market_code(self, symbol):
-        if symbol.startswith('6'):
-            return f"1.{symbol}"
-        else:
-            return f"0.{symbol}"
-    
-    def get_quote(self, symbol):
-        try:
-            secid = self._get_market_code(symbol)
-            params = {
-                'secid': secid,
-                'fields': 'f43,f44,f45,f46,f47,f48,f50,f51,f52,f58,f60,f169,f170',
-                'ut': 'fa5fd1943c7b386f172d6893dbfba10b'
-            }
-            
-            response = requests.get(self.base_url, params=params, headers=self.headers, timeout=10)
-            data = response.json()
-            
-            if data and 'data' in data and data['data']:
-                d = data['data']
-                return {
-                    'c': d.get('f43', 0) / 100 if d.get('f43') else None,
-                    'o': d.get('f46', 0) / 100 if d.get('f46') else None,
-                    'h': d.get('f44', 0) / 100 if d.get('f44') else None,
-                    'l': d.get('f45', 0) / 100 if d.get('f45') else None,
-                    'pc': d.get('f60', 0) / 100 if d.get('f60') else None,
-                    'd': (d.get('f43', 0) - d.get('f60', 0)) / 100 if d.get('f43') and d.get('f60') else None,
-                    'dp': ((d.get('f43', 0) - d.get('f60', 0)) / d.get('f60', 1)) * 100 if d.get('f43') and d.get('f60') else None,
-                    'name': d.get('f58', '')
-                }
-            return None
-        except Exception as e:
-            print(f"东方财富获取 {symbol} 报价失败: {e}")
-            return None
 
 
 class HistoryAnalysisApp:
@@ -71,11 +24,6 @@ class HistoryAnalysisApp:
         self.root.minsize(800, 600)
         self.root.state('zoomed')
         
-        self.finnhub_client = None
-        if FINNHUB_API_KEY:
-            self.finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
-        
-        self.eastmoney_client = EastMoneyAPI()
         self.data_manager = StockDataManager()
         self.kline_manager = KLineManager()
         
@@ -91,8 +39,6 @@ class HistoryAnalysisApp:
         menubar = tk.Menu(self.root)
         
         file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="导入股票列表", command=self._import_stock_list)
-        file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.root.quit)
         menubar.add_cascade(label="文件", menu=file_menu)
         
@@ -129,8 +75,6 @@ class HistoryAnalysisApp:
             on_double_click=self._on_stock_double_click
         )
         self.stock_list.pack(fill=tk.BOTH, expand=True)
-        
-        self.stock_list.start_refresh_quotes(self._get_stock_quote)
     
     def _on_stock_double_click(self, values):
         self.current_symbol = values[0]
@@ -192,18 +136,6 @@ class HistoryAnalysisApp:
         )
         self._load_kline_data(self.kline_chart.current_period)
     
-    def _get_stock_quote(self, symbol, market='美股'):
-        if market == 'A股':
-            return self.eastmoney_client.get_quote(symbol)
-        else:
-            if not self.finnhub_client:
-                return None
-            try:
-                return self.finnhub_client.quote(symbol)
-            except Exception as e:
-                print(f"获取 {symbol} 报价失败: {e}")
-                return None
-    
     def _get_stock_kline(self, symbol, market, period='daily'):
         try:
             df = self.kline_manager.get_kline_data(symbol, market, period)
@@ -236,35 +168,6 @@ class HistoryAnalysisApp:
         except Exception as e:
             print(f"获取 {symbol} K线数据失败: {e}")
             return None
-    
-    def _import_stock_list(self):
-        from tkinter import filedialog
-        import json
-        import os
-        
-        file_path = filedialog.askopenfilename(
-            title="选择配置文件",
-            filetypes=[("JSON文件", "*.json"), ("所有文件", "*.*")],
-            initialdir=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'config')
-        )
-        
-        if not file_path:
-            return
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                config_data = json.load(f)
-            
-            if 'stocks' not in config_data:
-                messagebox.showerror("错误", "配置文件格式错误：缺少stocks字段")
-                return
-            
-            self.data_manager._config_cache = config_data
-            messagebox.showinfo("成功", f"已导入 {len(config_data['stocks'])} 只股票")
-            self._show_stock_list_view()
-            
-        except Exception as e:
-            messagebox.showerror("错误", f"导入配置文件失败: {str(e)}")
     
     def _update_kline_data(self):
         messagebox.showinfo("提示", "请在命令行运行 update_kline_data.py 更新数据")

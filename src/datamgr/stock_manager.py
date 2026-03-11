@@ -38,7 +38,11 @@ class StockDataManager:
     
     PERIODS = ['1min', '5min', '15min', '1hour', 'daily']
     
-    def __init__(self, base_dir='data', config_path=None):
+    def __init__(self, base_dir=None, config_path=None):
+        if base_dir is None:
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            base_dir = os.path.join(project_root, 'data')
+        
         self.base_dir = base_dir
         self.realtime_dir = os.path.join(base_dir, 'realtime')
         self.kline_dir = os.path.join(base_dir, 'kline_data')
@@ -274,13 +278,49 @@ class StockDataManager:
     
     def get_stock_list(self):
         """
-        获取股票列表
+        获取股票列表（从现有K线数据目录读取）
         
         Returns:
             list: 股票列表，每项包含 symbol, name, market
         """
-        config = self.load_stocks_config()
-        return config.get('stocks', [])
+        stocks = []
+        stock_keys = self.list_stocks()
+        
+        for stock_key in stock_keys:
+            parts = stock_key.split('_', 1)
+            if len(parts) == 2:
+                prefix, symbol = parts
+                if prefix == 'CN':
+                    market = 'A股'
+                elif prefix == 'US':
+                    market = '美股'
+                elif prefix == 'HK':
+                    market = '港股'
+                else:
+                    market = 'A股'
+                
+                name = self._get_stock_name(symbol, market)
+                stocks.append({
+                    'symbol': symbol,
+                    'name': name,
+                    'market': market
+                })
+        
+        return stocks
+    
+    def _get_stock_name(self, symbol, market):
+        """
+        从数据文件获取股票名称
+        """
+        try:
+            df = self.get_realtime_data(symbol, market, limit=1)
+            if not df.empty and 'name' in df.columns:
+                name = df['name'].iloc[0]
+                if name and name != symbol:
+                    return name
+        except:
+            pass
+        return symbol
     
     def add_stock(self, symbol, name, market='A股'):
         """
