@@ -1,9 +1,6 @@
 import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from .store import KLineStore, ConfigStore
-from .cache import KLineCache, ConfigCache
+from .store import KLineStore
+from .cache import KLineCache
 
 
 class KLineManager:
@@ -11,10 +8,9 @@ class KLineManager:
     K线数据管理器
     
     功能:
-    1. 从配置文件获取股票列表
-    2. 检查本地K线数据是否存在
-    3. 加载本地K线数据
-    4. 管理K线数据缓存
+    1. 检查本地K线数据是否存在
+    2. 加载/保存K线数据
+    3. 管理K线数据缓存
     
     目录结构:
     data/kline_data/
@@ -34,31 +30,122 @@ class KLineManager:
         'daily': {'days': 365, 'name': '日线'}
     }
     
+    COLUMNS = [
+        'date', 'open', 'close', 'high', 'low',
+        'volume', 'amount', 'amplitude', 'change_pct', 'change', 'turnover'
+    ]
+    
     def __init__(self, data_dir=None):
         if data_dir is None:
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             data_dir = os.path.join(project_root, 'data', 'kline_data')
-            config_dir = os.path.join(project_root, 'config')
-        else:
-            config_dir = os.path.dirname(data_dir)
         
         self.store = KLineStore(data_dir)
-        self.config_store = ConfigStore(config_dir)
-        self.kline_cache = KLineCache()
-        self.config_cache = ConfigCache()
-        self.stock_list = []
-        
-    def load_stock_list(self):
-        config = self.config_store.load()
-        self.stock_list = config.get('stocks', [])
-        print(f"已加载 {len(self.stock_list)} 只股票")
-        return self.stock_list
+        self.cache = KLineCache()
     
-    def check_local_data(self, symbol, market, period):
+    def get_data(self, symbol, market, period, limit=None):
+        """
+        获取K线数据
+        
+        Args:
+            symbol: 股票代码
+            market: 市场
+            period: 周期
+            limit: 返回最近N条数据
+        
+        Returns:
+            DataFrame: K线数据
+        """
+        cached = self.cache.get_kline(symbol, market, period)
+        if cached is not None:
+            if limit and len(cached) > limit:
+                return cached.tail(limit).reset_index(drop=True)
+            return cached.copy()
+        
+        df = self.store.load(symbol, market, period, limit)
+        if df is not None and not df.empty:
+            self.cache.set_kline(symbol, market, period, df)
+        return df
+    
+    def save_data(self, symbol, market, period, data):
+        """
+        保存K线数据
+        
+        Args:
+            symbol: 股票代码
+            market: 市场
+            period: 周期
+            data: K线数据列表或DataFrame
+        
+        Returns:
+            bool: 是否成功
+        """
+        success = self.store.save(symbol, market, period, data)
+        if success:
+            self.cache.delete_kline(symbol, market, period)
+        return success
+    
+    def append_data(self, symbol, market, period, data):
+        """
+        追加K线数据
+        
+        Args:
+            symbol: 股票代码
+            market: 市场
+            period: 周期
+            data: 单条K线数据字典或列表
+        
+        Returns:
+            bool: 是否成功
+        """
+        success = self.store.append(symbol, market, period, data)
+        if success:
+            self.cache.delete_kline(symbol, market, period)
+        return success
+    
+    def exists(self, symbol, market, period):
+        """
+        检查K线数据是否存在
+        """
+        return self.store.exists(symbol, market, period)
+    
+    def delete(self, symbol, market, period=None):
+        """
+        删除K线数据
+        
+        Args:
+            symbol: 股票代码
+            market: 市场
+            period: 周期，None表示删除该股票所有周期数据
+        """
+        return self.store.delete(symbol, market, period)
+    
+    def get_latest_date(self, symbol, market, period):
+        """
+        获取K线数据最新日期
+        """
+        return self.store.get_latest_date(symbol, market, period)
+    
+    def get_data_info(self, symbol, market, period):
+        """
+        获取K线数据信息
+        """
         return self.store.get_data_info(symbol, market, period)
     
     def is_data_sufficient(self, symbol, market, period, min_records=None):
-        local_info = self.check_local_data(symbol, market, period)
+        """
+        检查数据是否充足
+        
+        Args:
+            symbol: 股票代码
+            market: 市场
+            period: 周期
+            min_records: 最小记录数
+        
+        Returns:
+            tuple: (是否充足, 数据信息)
+        """
+        local_info = self.get_data_info(symbol, market, period)
         
         if not local_info['exists']:
             return False, local_info
@@ -88,76 +175,32 @@ class KLineManager:
         
         return True, local_info
     
-    def load_kline_data(self, symbol, market, period):
-        cached = self.kline_cache.get_kline(symbol, market, period)
-        if cached is not None:
-            return cached
-        
-        df = self.store.load(symbol, market, period)
-        if df is not None and not df.empty:
-            self.kline_cache.set_kline(symbol, market, period, df)
-        return df
-    
-    def save_kline_data(self, symbol, market, period, data):
+    def get_all_periods_data(self, symbol, market):
         """
-        保存K线数据
+        获取所有周期的K线数据
         
         Args:
             symbol: 股票代码
             market: 市场
-            period: 周期
-            data: K线数据列表或DataFrame
         
         Returns:
-            bool: 是否成功
+            dict: {period: DataFrame}
         """
-        success = self.store.save(symbol, market, period, data)
-        if success:
-            self.kline_cache.delete_kline(symbol, market, period)
-        return success
-    
-    def get_kline_data(self, symbol, market, period):
-        return self.load_kline_data(symbol, market, period)
-    
-    def get_all_kline_data(self, symbol, market):
         result = {}
         for period in self.PERIODS.keys():
-            df = self.get_kline_data(symbol, market, period)
-            if df is not None:
+            df = self.get_data(symbol, market, period)
+            if df is not None and not df.empty:
                 result[period] = df
         return result
     
-    def show_data_status(self):
-        if not self.stock_list:
-            self.load_stock_list()
-        
-        print(f"\n{'='*100}")
-        print(f"{'代码':<10} {'名称':<12} {'市场':<8} {'1分钟':<10} {'5分钟':<10} {'15分钟':<10} {'1小时':<10} {'日线':<10}")
-        print(f"{'='*100}")
-        
-        for stock in self.stock_list:
-            symbol = stock.get('symbol')
-            name = stock.get('name', '')
-            market = stock.get('market', 'A股')
-            
-            status = []
-            for period in ['1min', '5min', '15min', '1hour', 'daily']:
-                is_sufficient, info = self.is_data_sufficient(symbol, market, period)
-                if is_sufficient:
-                    status.append(f"OK {info['count']}")
-                elif info['exists']:
-                    status.append(f"~ {info['count']}")
-                else:
-                    status.append("X None")
-            
-            print(f"{symbol:<10} {name:<12} {market:<8} {status[0]:<10} {status[1]:<10} {status[2]:<10} {status[3]:<10} {status[4]:<10}")
-        
-        print(f"{'='*100}")
-        print("Status: OK=sufficient, ~=insufficient, X=none")
-    
-    def list_stock_directories(self):
+    def list_stocks(self):
+        """
+        列出所有有K线数据的股票
+        """
         return self.store.list_stocks()
     
     def clear_cache(self):
-        self.kline_cache.clear()
-        self.config_cache.clear()
+        """
+        清空内存缓存
+        """
+        self.cache.clear()
